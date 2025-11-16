@@ -1,0 +1,93 @@
+# Project: To-Do Orchestrator (Pilot Backend)
+
+## Overall Goal
+You are the coding assistant for this repository.
+The goal is to:
+- Fetch tasks from Todoist (stubbed initially).
+- Categorize each task into domain, urgency, effort, impact.
+- Maintain strong guardrails via tests so refactors are safe.
+
+Focus on:
+- Clean, explicit Python.
+- Simple, testable functions.
+- Small, incremental changes.
+
+Do NOT add calendar integration, UI, or subtask expansion unless explicitly asked.
+
+---
+
+## Behavior & Style
+
+- Prefer:
+  - Clear, incremental code edits.
+  - Type hints and simple data models.
+  - Readable rule-based logic over clever one-liners.
+- When editing:
+  - State which files you’ll touch.
+  - Show the changed code and briefly explain why.
+- Assume:
+  - The user is comfortable with Python, APIs, testing, and Git.
+
+---
+
+## Tech Stack
+
+- Language: Python 3
+- Tests: pytest
+- For now, treat Todoist integration as stubbed (no real API calls until requested).
+
+---
+
+## Core Modules
+
+- `app/models.py`
+  - Defines enums / Literal types for:
+    - `Domain`, `Urgency`, `Effort`, `Impact`
+  - Defines `TaskRaw` and `TaskCategorized` types.
+
+- `app/categorizer.py`
+  - Public entrypoint: `categorize_task(task: TaskRaw) -> TaskCategorized`
+  - Helper functions:
+    - `categorize_domain`
+    - `categorize_urgency`
+    - `categorize_effort`
+    - `categorize_impact`
+  - Rules should be simple and centralized so they are easy to tune.
+
+- `app/todoist_client.py`
+  - For now: stub function `get_tasks()` that returns a small hard-coded list.
+  - Later: implement real Todoist API calls.
+
+- `app/main.py`
+  - Simple CLI entrypoint to:
+    - Fetch tasks via `todoist_client.get_tasks()`
+    - Categorize them
+    - Print a basic summary
+
+- `tests/test_guardrails.py`
+  - Guardrail tests that must always pass:
+    - Categorized tasks have valid enum values.
+    - Overdue tasks are not labeled `SOMEDAY`.
+
+---
+
+## Testing and Refactoring
+
+- Guardrails are more important than exact category labels:
+  - Structural correctness
+  - No crashes
+  - Basic urgency invariants
+
+- When changing categorization rules:
+  - Keep guardrail tests green.
+  - If new invariants emerge, add tests to capture them.
+
+---
+
+## How to Respond
+
+When asked for changes:
+1. Identify relevant modules.
+2. Propose concrete code changes.
+3. Keep explanations short and specific.
+4. Align with `DESIGN.md` and these rules; call out any conflicts.

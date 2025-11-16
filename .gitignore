@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.swp
+*.swo
+*.log
+
+# Environments
+.venv/
+env/
+venv/
+
+# IDE
+.idea/
+.vscode/
+*.code-workspace
+
+# Others
+.DS_Store
