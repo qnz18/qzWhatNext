@@ -1,0 +1,360 @@
+# qzWhatNext – Decision Log
+
+Version: 0.1.0  
+Last Updated: 2025-01-XX  
+Status: Locked (MVP decisions)
+
+This log records all non-obvious product and engine decisions that govern qzWhatNext.
+If a behavior is questioned, changed, or debugged, this log is the first reference.
+
+---
+
+## D-001 — Product Name
+
+**Decision:**  
+The product name is **qzWhatNext**.
+
+**Rationale:**  
+Name reflects the core value: telling the user what to do now and next.
+
+**Implications:**  
+Used consistently across documentation, code, and AI context.
+
+**Status:** Locked
+
+---
+
+## D-002 — Core Product Characteristic: Trust
+
+**Decision:**  
+Continually building **user trust** is a first-class product requirement.
+
+**Rationale:**  
+Automation without trust leads to abandonment. Predictability, explainability, and user control are required for adoption.
+
+**Implications:**  
+- Deterministic rules override AI
+- Explanations are mandatory
+- Surprising behavior is avoided even if suboptimal
+
+**Status:** Locked
+
+---
+
+## D-003 — Deterministic Rules Override AI
+
+**Decision:**  
+Deterministic engine rules always override AI inference or suggestions.
+
+**Rationale:**  
+Ensures predictability, auditability, and safety.
+
+**Implications:**  
+AI may assist with inference but never controls outcomes.
+
+**Status:** Locked
+
+---
+
+## D-004 — AI Exclusion via Task Name Prefix
+
+**Decision:**  
+Any task whose title begins with a period (`.`) is always excluded from AI reasoning.
+
+**Rationale:**  
+Provides a fast, explicit, user-controlled privacy and trust mechanism.
+
+**Implications:**  
+- No AI inference
+- No automatic reclassification
+- No automatic tier changes
+- Task still participates in deterministic scheduling
+
+**Status:** Locked
+
+---
+
+## D-005 — Explicit AI Exclusion Flag
+
+**Decision:**  
+Users may explicitly flag any task as AI-excluded.
+
+**Rationale:**  
+Supports sensitive or personal tasks where automation is undesirable.
+
+**Implications:**  
+Same behavior as `.`-prefixed tasks.
+
+**Status:** Locked
+
+---
+
+## D-006 — Single Governing Priority Tier per Task
+
+**Decision:**  
+Each task has exactly **one governing priority tier** at any moment.
+
+**Rationale:**  
+Multiple governing tiers would make ranking, scheduling, and explanations ambiguous.
+
+**Implications:**  
+Tasks may have multiple signals, but the highest-priority applicable tier governs.
+
+**Status:** Locked
+
+---
+
+## D-007 — Fixed Priority Hierarchy
+
+**Decision:**  
+The governing priority hierarchy is fixed and ordered:
+
+1. Deadline proximity  
+2. Risk of negative consequence  
+3. Downstream impact  
+4. Child-related needs  
+5. Personal health needs  
+6. Work obligations  
+7. Stress reduction  
+8. Family/social commitments  
+9. Home care
+
+**Rationale:**  
+A fixed hierarchy ensures predictability and user trust.
+
+**Implications:**  
+AI and personalization may not reorder this hierarchy.
+
+**Status:** Locked
+
+---
+
+## D-008 — AI Proposes Attributes, Engine Assigns Tier
+
+**Decision:**  
+AI may propose task attributes with confidence; the rules engine assigns the governing tier deterministically.
+
+**Rationale:**  
+Separates probabilistic inference from authoritative decision-making.
+
+**Implications:**  
+Tier assignment is inspectable and debuggable.
+
+**Status:** Locked
+
+---
+
+## D-009 — Tier Change Policy Based on Confidence
+
+**Decision:**  
+Tier changes require user confirmation **only when AI confidence is low**.
+
+**Rationale:**  
+Allows self-correction without unnecessary friction or trust erosion.
+
+**Implications:**  
+- High-confidence changes apply automatically with explanation
+- Low-confidence changes require accept/reject
+- Rejected changes inform learning
+
+**Status:** Locked
+
+---
+
+## D-010 — Transition Time Is Not a Task Category
+
+**Decision:**  
+Transition Time is a system-generated, schedulable entity but **not a normal task**.
+
+**Rationale:**  
+Transition Time is real but must never compete with tasks or be deprioritized.
+
+**Implications:**  
+- Not stack-ranked
+- Not snoozable
+- Not optional
+- Visible and explainable
+
+**Status:** Locked
+
+---
+
+## D-011 — Transition Time Is First-Class
+
+**Decision:**  
+Transition Time must be explicitly modeled and scheduled.
+
+**Examples:**  
+- Changing clothes  
+- Driving  
+- Setup/teardown  
+- Waiting  
+
+**Rationale:**  
+Eliminates hidden or “phantom” time and improves schedule realism.
+
+**Implications:**  
+Consumes time and energy; affects capacity and overflow.
+
+**Status:** Locked
+
+---
+
+## D-012 — User Overrides for Transition Rules
+
+**Decision:**  
+Users may define plain-English rules that influence Transition Time.
+
+**Rationale:**  
+Users know their routines better than any model.
+
+**Implications:**  
+Rules are persisted, applied consistently, and editable.
+
+**Status:** Locked
+
+---
+
+## D-013 — Scheduling Authority Limits
+
+**Decision:**  
+The system may move only tasks it scheduled itself.
+
+**May not move:**  
+- User-blocked calendar time  
+- Manually scheduled events
+
+**Rationale:**  
+Protects user intent and trust.
+
+**Status:** Locked
+
+---
+
+## D-014 — Default Scheduling Granularity
+
+**Decision:**  
+Default scheduling unit is **30 minutes**.
+
+**Rationale:**  
+Balances realism with flexibility.
+
+**Status:** Locked
+
+---
+
+## D-015 — Task Splitting Allowed
+
+**Decision:**  
+Tasks may be split across multiple time blocks.
+
+**Rationale:**  
+Reflects real-world work patterns and prevents artificial blocking.
+
+**Status:** Locked
+
+---
+
+## D-016 — Energy Budgeting Is Enforced
+
+**Decision:**  
+Each day has a finite energy budget that constrains scheduling.
+
+**Rationale:**  
+Time availability alone is insufficient for realistic planning.
+
+**Implications:**  
+High-energy clustering is avoided; overflow is deferred.
+
+**Status:** Locked
+
+---
+
+## D-017 — Overflow Handling
+
+**Decision:**  
+When work exceeds capacity:
+- Protect high-importance tasks
+- Defer lower-tier tasks
+- Notify the user of likely non-completion
+
+**Rationale:**  
+Prevents silent failure and burnout.
+
+**Status:** Locked
+
+---
+
+## D-018 — Smart Snooze Behavior
+
+**Decision:**  
+Snoozing suggests exactly **one** next-best time.
+
+**Triggers:**  
+- Missed task  
+- Explicit request  
+- Detected overload  
+
+**Rationale:**  
+Reduces decision fatigue.
+
+**Status:** Locked
+
+---
+
+## D-019 — No Free-Form AI Explanations (v1)
+
+**Decision:**  
+User-facing explanations must be generated from templates using structured reasons.
+
+**Rationale:**  
+Prevents hallucination, inconsistency, and false certainty.
+
+**Implications:**  
+LLMs may not generate open-ended explanation prose in v1.
+
+**Status:** Locked
+
+---
+
+## D-020 — Success Metric Definition
+
+**Decision:**  
+Primary success metric is **total number of tasks completed trending upward**.
+
+**Rationale:**  
+Percentage completion is distorted by task inflow.
+
+**Status:** Locked
+
+---
+
+## D-021 — MVP Input Source
+
+**Decision:**  
+MVP supports ingestion from **Todoist only**.
+
+**Rationale:**  
+Limits scope and integration risk.
+
+**Status:** Locked
+
+---
+
+## D-022 — Future Task Sharing Model
+
+**Decision:**  
+Shared tasks may accept priority feedback from others, but changes apply only after user approval.
+
+**Rationale:**  
+Prevents external priority hijacking.
+
+**Status:** Locked (Future)
+
+---
+
+## Canonical Rule
+
+If a future behavior conflicts with a decision in this log:
+- The log must be updated explicitly
+- Silent divergence is not allowed
