@@ -4,5 +4,7 @@ packaging==25.0
 pluggy==1.6.0
 Pygments==2.19.2
 pytest==8.4.2
+python-dotenv==1.0.0
 tomli==2.3.0
+todoist-api-python==3.1.0
 typing_extensions==4.15.0
