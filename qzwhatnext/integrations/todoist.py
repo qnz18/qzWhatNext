@@ -61,15 +61,23 @@ class TodoistClient:
             Normalized Task object
         """
         # Parse dates (handle timezone-aware and naive datetimes)
-        created_at_str = todoist_task["created_at"]
-        if created_at_str.endswith("Z"):
-            created_at_str = created_at_str.replace("Z", "+00:00")
-        created_at = datetime.fromisoformat(created_at_str)
+        # Handle missing created_at by using current time as fallback
+        created_at_str = todoist_task.get("created_at")
+        if created_at_str:
+            if created_at_str.endswith("Z"):
+                created_at_str = created_at_str.replace("Z", "+00:00")
+            created_at = datetime.fromisoformat(created_at_str)
+        else:
+            created_at = datetime.now()
         
-        updated_at_str = todoist_task["updated_at"]
-        if updated_at_str.endswith("Z"):
-            updated_at_str = updated_at_str.replace("Z", "+00:00")
-        updated_at = datetime.fromisoformat(updated_at_str)
+        # Handle missing updated_at by using created_at or current time as fallback
+        updated_at_str = todoist_task.get("updated_at")
+        if updated_at_str:
+            if updated_at_str.endswith("Z"):
+                updated_at_str = updated_at_str.replace("Z", "+00:00")
+            updated_at = datetime.fromisoformat(updated_at_str)
+        else:
+            updated_at = created_at  # Fallback to created_at if updated_at is missing
         
         deadline = None
         if todoist_task.get("due"):

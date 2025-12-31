@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import List, Optional, Dict
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from qzwhatnext.models.task import Task
 from qzwhatnext.models.scheduled_block import ScheduledBlock
@@ -37,6 +37,7 @@ class ScheduleResponse(BaseModel):
     scheduled_blocks: List[ScheduledBlock]
     overflow_tasks: List[Task]
     start_time: Optional[datetime]
+    task_titles: Dict[str, str] = Field(default_factory=dict, description="Map of entity_id to task title")
 
 
 class SyncResponse(BaseModel):
@@ -90,8 +91,17 @@ async def root():
                 status.innerHTML = 'Importing tasks...';
                 try {
                     const response = await fetch('/import', { method: 'POST' });
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        status.innerHTML = 'Error: ' + (errorData.detail || response.statusText);
+                        return;
+                    }
                     const data = await response.json();
-                    status.innerHTML = `Imported ${data.imported_count} tasks`;
+                    if (data.imported_count !== undefined) {
+                        status.innerHTML = `Imported ${data.imported_count} tasks`;
+                    } else {
+                        status.innerHTML = 'Error: Invalid response from server';
+                    }
                 } catch (error) {
                     status.innerHTML = 'Error: ' + error.message;
                 }
@@ -133,12 +143,20 @@ async def root():
                         return;
                     }
                     
-                    let html = '<table><tr><th>Start</th><th>End</th><th>Task ID</th></tr>';
+                    let html = '<table><tr><th>Start</th><th>End</th><th>Task</th></tr>';
                     data.scheduled_blocks.forEach(block => {
+                        let taskName = 'Unknown';
+                        if (block.entity_type === 'task' && data.task_titles && data.task_titles[block.entity_id]) {
+                            taskName = data.task_titles[block.entity_id];
+                        } else if (block.entity_type === 'transition') {
+                            taskName = 'Transition';
+                        } else {
+                            taskName = block.entity_id; // Fallback to ID if title not found
+                        }
                         html += `<tr>
                             <td>${new Date(block.start_time).toLocaleString()}</td>
                             <td>${new Date(block.end_time).toLocaleString()}</td>
-                            <td>${block.entity_id}</td>
+                            <td>${taskName}</td>
                         </tr>`;
                     });
                     html += '</table>';
@@ -208,10 +226,17 @@ async def build_schedule():
         # Store schedule
         schedule_store = schedule_result
         
+        # Build task titles map for frontend lookup
+        task_titles = {}
+        for block in schedule_result.scheduled_blocks:
+            if block.entity_type == "task" and block.entity_id in tasks_store:
+                task_titles[block.entity_id] = tasks_store[block.entity_id].title
+        
         return ScheduleResponse(
             scheduled_blocks=schedule_result.scheduled_blocks,
             overflow_tasks=schedule_result.overflow_tasks,
-            start_time=schedule_result.start_time
+            start_time=schedule_result.start_time,
+            task_titles=task_titles
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to build schedule: {str(e)}")
@@ -223,10 +248,17 @@ async def view_schedule():
     if schedule_store is None:
         raise HTTPException(status_code=404, detail="No schedule available. Build a schedule first.")
     
+    # Build task titles map for frontend lookup
+    task_titles = {}
+    for block in schedule_store.scheduled_blocks:
+        if block.entity_type == "task" and block.entity_id in tasks_store:
+            task_titles[block.entity_id] = tasks_store[block.entity_id].title
+    
     return ScheduleResponse(
         scheduled_blocks=schedule_store.scheduled_blocks,
         overflow_tasks=schedule_store.overflow_tasks,
-        start_time=schedule_store.start_time
+        start_time=schedule_store.start_time,
+        task_titles=task_titles
     )
 
 
