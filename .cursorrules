@@ -1,0 +1,159 @@
+# qzWhatNext – Cursor Rules
+
+These rules ensure AI assistance follows qzWhatNext's core principles and critical enforcement requirements. **For detailed specifications, always consult the canonical documents** (see References section below).
+
+---
+
+## Critical Enforcement Rules
+
+### AI Exclusion (MUST ENFORCE BEFORE ANY AI CALL)
+
+A task is AI-excluded if:
+- Its title begins with a period (`.`)
+- OR the user explicitly flags it as `ai_excluded: true`
+
+**AI-excluded tasks:**
+- Are NEVER sent to AI (check this BEFORE any AI call)
+- Never receive AI-updated attributes
+- Never change tiers due to AI inference
+- May still be scheduled deterministically
+
+**This is the most critical rule. Violating it breaks user trust.**
+
+### Core Non-Negotiable Principles
+
+**Trust over optimization**
+- User trust is prioritized over efficiency or utilization
+- Predictable behavior is preferred over optimal outcomes
+- Surprising behavior is avoided even if suboptimal
+
+**Deterministic rules override AI**
+- AI may assist with inference but never controls outcomes
+- Rules engine makes authoritative decisions, not AI
+- Same inputs must always produce same outputs
+
+**Explainability and reversibility**
+- Every system action must have a one-line explanation derived from structured reasons
+- All actions must be reversible
+- No free-form AI explanations in MVP (use templates with structured reasons)
+
+**Privacy-first approach**
+- No user data is shared with third parties
+- AI-excluded tasks are never sent to AI
+- Sensitive tasks are fully supported
+
+### AI Responsibilities
+
+**AI may infer** (with confidence scores):
+- Structured attributes: category, duration, energy_intensity, risk_score, impact_score, dependencies
+- See `context-pack.md` section 4.2 for full list
+
+**AI may NOT:**
+- Assign priority tiers (rules engine does this)
+- Override hard constraints
+- Move user-blocked or manually scheduled time
+- Generate free-form user-facing explanations (MVP)
+- Operate on AI-excluded tasks
+
+### Architectural Constraints (Quick Reference)
+
+- Every task has exactly ONE governing priority tier (see `context-pack.md` section 6 for hierarchy)
+- Transition Time is system-generated, NOT a task category (see `engine/transition-time.md`)
+- System may move ONLY tasks it scheduled itself
+- System may NOT move user-blocked time or manually scheduled events
+- Default scheduling granularity: 30 minutes
+
+---
+
+## Common Pitfalls to Avoid
+
+- ❌ Sending AI-excluded tasks to AI (check BEFORE any AI call)
+- ❌ Allowing AI to assign priority tiers
+- ❌ Moving user-blocked or manually scheduled time
+- ❌ Silent failures or dropped tasks
+- ❌ Non-deterministic behavior in core engine
+- ❌ Free-form AI explanations (use templates)
+- ❌ Treating Transition Time as a task category
+- ❌ Reordering the fixed priority hierarchy
+- ❌ Skipping audit logging for trust-critical actions
+
+---
+
+## Code Quality Standards
+
+**Deterministic Behavior**
+- Same inputs → same outputs (no randomness in core logic)
+- Rebuilds must be deterministic given identical inputs
+
+**Error Handling**
+- No silent failures
+- Overflow tasks must be surfaced with one-line explanation
+- When work exceeds capacity: protect high-importance tasks, defer lower-tier, notify user
+
+**Audit Logging**
+- Log all trust-critical actions (imports, tier changes, schedule builds, etc.)
+- Logs must be queryable for trust and debugging
+
+---
+
+## General Development Guidelines
+
+**Minimal Changes Principle**
+- Don't refactor code unless it's absolutely necessary for the current task
+- Make the smallest change that solves the problem
+- Preserve existing patterns and conventions unless they conflict with requirements
+- Don't "improve" code that isn't related to the current task
+
+**Scope and Communication**
+- Ask before making large architectural changes
+- Don't rewrite entire files unless explicitly requested
+- When in doubt, implement the simplest solution that meets requirements
+- Don't add features or optimizations beyond what's requested
+
+**Code Preservation**
+- Maintain existing code style and formatting
+- Don't change working code "just because"
+- Preserve comments and documentation unless they're incorrect
+- Keep existing test structure unless tests need to change for new functionality
+
+**Incremental Development**
+- Build features incrementally
+- Test as you go
+- Don't over-engineer solutions
+- Prefer working code over perfect code
+
+---
+
+## References to Canonical Documents
+
+**When implementing or making decisions, consult these documents:**
+
+1. **`context-pack.md`** - Global rules, product identity, priority hierarchy, AI guardrails
+2. **`decision-log/decisions.md`** - All locked architectural and product decisions
+3. **`engine/scoring-and-scheduling.md`** - Engine spec, data models, pipeline, scheduling algorithm
+4. **`prd/prd.md`** - MVP scope and requirements
+
+**For specific details:**
+- **Priority tier hierarchy** → `context-pack.md` section 6.1
+- **Data model fields** → `engine/scoring-and-scheduling.md` section 2
+- **Engine pipeline steps** → `engine/scoring-and-scheduling.md` section 4
+- **AI guardrails (detailed)** → `context-pack.md` section 4 and `security/ai-guardrails.md`
+- **Transition Time rules** → `engine/transition-time.md` and `context-pack.md` section 7
+- **Scheduling algorithm** → `engine/scoring-and-scheduling.md` section 13
+- **Energy budgeting** → `engine/scoring-and-scheduling.md` section 11
+
+**Canonical Rule:** "Chats generate artifacts. Artifacts replace chats."
+
+---
+
+## Success Criteria
+
+Code is correct when:
+- ✅ AI exclusion is enforced before any AI call
+- ✅ Priority tiers are assigned deterministically by rules engine
+- ✅ User-blocked time is never moved
+- ✅ Every system action has a one-line explanation
+- ✅ All actions are reversible
+- ✅ Same inputs produce same outputs
+- ✅ Overflow is detected and notified (never silent)
+- ✅ Audit logs capture all trust-critical actions
