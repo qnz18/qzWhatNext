@@ -90,7 +90,44 @@ If behavior is unclear or disputed, consult in this order:
 
 **Canonical rule:** Chats generate artifacts. Artifacts replace chats.
 
+## Setup Instructions
+
+### Prerequisites
+- Python 3.9 or higher
+- Todoist API token
+- Google Cloud project with Calendar API enabled
+
+### Installation
+
+1. Create a virtual environment:
+```bash
+python3 -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+```
+
+2. Install dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+3. Set up environment variables:
+   - Copy `.env.example` to `.env` (or create `.env` manually)
+   - Add your `TODOIST_API_TOKEN`
+   - Add Google Calendar credentials path and calendar ID
+
+4. For Google Calendar integration:
+   - Enable Google Calendar API in Google Cloud Console
+   - Download OAuth2 credentials as `credentials.json` to project root
+
+5. Run the application:
+```bash
+uvicorn qzwhatnext.api.app:app --reload
+```
+
+The API will be available at `http://localhost:8000`
+API documentation at `http://localhost:8000/docs`
+
 ## Suggested repo layout
 
-This repo is designed to keep “source of truth” documents close to the code:
+This repo is designed to keep "source of truth" documents close to the code:
 

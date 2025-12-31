@@ -124,6 +124,174 @@ A task is AI-excluded if:
 
 ---
 
+## Testing Guidelines
+
+**Deterministic Testing**
+- All tests must be deterministic (same inputs → same outputs)
+- Use fixed test data, never random seeds in core logic tests
+- Test AI exclusion enforcement explicitly
+- Test hard constraint violations (user-blocked time, manually scheduled events)
+- Test tier assignment logic deterministically
+
+**Test Coverage Priorities**
+- Test trust-critical paths first (AI exclusion, tier assignment, scheduling constraints)
+- Test overflow detection and notification
+- Test audit logging for all trust-critical actions
+- Test reversibility of all system actions
+
+**Test Data**
+- Use deterministic fixtures
+- Avoid time-dependent tests unless testing time-specific behavior
+- Mock external APIs (Todoist) to ensure deterministic behavior
+
+---
+
+## Security & Privacy Implementation
+
+**Data Protection**
+- Never log sensitive task data (titles, notes) in plain text
+- Encrypt sensitive data at rest
+- Use environment variables for API keys and secrets
+- Never commit secrets or credentials to version control
+
+**Input Validation**
+- Validate all external API inputs (Todoist, calendar APIs)
+- Sanitize user inputs before processing
+- Reject invalid data with clear, structured error messages
+- Never trust external API responses without validation
+
+**Privacy Enforcement**
+- AI-excluded tasks must never appear in logs or analytics
+- Audit logs should reference task IDs, not task content for excluded tasks
+- Implement data retention policies for user data
+
+---
+
+## Data Validation
+
+**Validation Requirements**
+- Validate all inputs before processing (task data, API responses, user inputs)
+- Validate data model fields match canonical spec (see `engine/scoring-and-scheduling.md`)
+- Reject invalid data with structured error messages (not free-form)
+- Never process data that fails validation
+
+**Validation Points**
+- On task import (normalize and validate)
+- Before AI inference (check exclusion rules first)
+- Before tier assignment (validate required attributes)
+- Before scheduling (validate constraints)
+
+---
+
+## API/Integration Design
+
+**External API Handling**
+- Handle API failures gracefully (network errors, rate limits, timeouts)
+- Implement retry logic with exponential backoff
+- Rate limit external API calls appropriately
+- Cache API responses when appropriate (respecting data freshness)
+
+**Error Handling**
+- Never fail silently on API errors
+- Log API failures with context (but not sensitive data)
+- Surface API errors to user with structured explanations
+- Implement fallback behavior when APIs are unavailable
+
+**Integration Patterns**
+- Use type-safe API clients when possible
+- Validate all API responses against expected schemas
+- Handle API version changes gracefully
+- Document API dependencies and rate limits
+
+---
+
+## Error Messages & User Communication
+
+**Error Message Standards**
+- Use structured error templates (not free-form AI-generated text)
+- Include one-line explanations derived from structured reasons
+- Never expose internal errors or stack traces to users
+- Provide actionable guidance when possible
+
+**User-Facing Messages**
+- All system actions must have explainable outcomes
+- Error messages must align with trust principles (transparent, reversible)
+- Use consistent message formatting across the system
+- Reference decision IDs from `decision-log/decisions.md` in technical error logs
+
+---
+
+## Configuration & Secrets Management
+
+**Configuration**
+- Use environment variables for configuration
+- Provide sensible defaults for all configuration options
+- Validate configuration on startup
+- Document all configuration options
+
+**Secrets Management**
+- Never hardcode API keys, tokens, or credentials
+- Use secure secret management (environment variables, secret managers)
+- Rotate secrets regularly
+- Never log secrets or credentials
+
+---
+
+## Type Safety & Code Documentation
+
+**Type Safety**
+- Prefer type-safe languages when possible
+- Use strong typing for data models (Task, Transition, ScheduledBlock)
+- Use enums/types for fixed hierarchies (priority tiers, categories, energy levels)
+- Validate types at runtime for external data (API responses)
+
+**Code Documentation**
+- Document complex logic, especially deterministic rules
+- Reference decision IDs from `decision-log/decisions.md` in code comments
+- Explain why deterministic rules override AI in complex logic
+- Document confidence thresholds for tier changes
+- Keep documentation in sync with code changes
+
+---
+
+## Git & Version Control Practices
+
+**Commit Messages**
+- Use clear, descriptive commit messages
+- Reference relevant decision IDs or canonical docs when applicable
+- Keep commits focused (one logical change per commit)
+- Use conventional commit format when helpful
+
+**Branching & Workflow**
+- Keep main branch stable and deployable
+- Use feature branches for new functionality
+- Review changes before merging to main
+- Tag releases appropriately
+
+---
+
+## Question-Asking Guidelines
+
+**When to Ask**
+- Before making large architectural changes
+- When requirements are ambiguous or conflicting
+- When multiple valid implementations exist
+- Before adding features beyond the current task scope
+
+**When to Proceed**
+- When requirements are clear from canonical docs
+- When following established patterns
+- When implementing straightforward fixes or features
+- When the simplest solution is obvious
+
+**Communication Style**
+- Ask specific questions, not open-ended ones
+- Provide context about what you're trying to achieve
+- Reference relevant canonical docs in questions
+- Suggest solutions when asking questions
+
+---
+
 ## References to Canonical Documents
 
 **When implementing or making decisions, consult these documents:**

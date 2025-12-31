@@ -18,6 +18,16 @@ ENV/
 .env
 .env.local
 
+# Google OAuth2 credentials and tokens
+credentials.json
+token.json
+client_secret*.json
+
+# Python cache
+*.pyc
+__pycache__/
+.pytest_cache/
+
 # IDE
 .vscode/
 .idea/
