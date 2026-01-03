@@ -329,13 +329,18 @@ Percentage completion is distorted by task inflow.
 
 ---
 
-## D-021 — MVP Input Source
+## D-021 — MVP Input Sources
 
 **Decision:**  
-MVP supports ingestion from **Todoist only**.
+MVP supports task import from **Google Sheets** and **REST API endpoints**. Todoist integration is deferred to future releases.
 
 **Rationale:**  
-Limits scope and integration risk.
+Google Sheets provides flexible import while maintaining simplicity. REST API enables direct task creation (e.g., via iPhone shortcuts). Removing Todoist dependency simplifies MVP scope.
+
+**Implications:**  
+- Users can export from Todoist to Google Sheets and import
+- API endpoints enable programmatic task creation
+- Future integrations (Todoist, Google Tasks, etc.) can be added incrementally
 
 **Status:** Locked
 
@@ -401,6 +406,60 @@ Users need a way to view output and refine prioritization parameters. A simple t
 - Users can view and edit task metadata (priority, duration, category, etc.)
 - Users can see the effect of parameter changes on the schedule
 - Timeline/ribbon UI is explicitly out of MVP scope
+
+**Status:** Locked
+
+---
+
+## D-026 — Own Database Architecture
+
+**Decision:**  
+qzWhatNext maintains its own database optimized for scheduling and prioritization. MVP uses SQLite; architecture supports easy migration to PostgreSQL for scalability.
+
+**Rationale:**  
+Own database provides independence from external systems, enables optimization for scheduling queries, and supports both local (Raspberry Pi) and cloud deployments. SQLite balances simplicity with capability; PostgreSQL migration path supports future growth.
+
+**Implications:**  
+- Tasks are persisted, not in-memory
+- Database schema optimized for scheduling/prioritization queries
+- SQLite suitable for single-user MVP scale
+- Architecture allows PostgreSQL migration with minimal code changes (using SQLAlchemy or similar ORM)
+
+**Status:** Locked
+
+---
+
+## D-027 — Task Ownership and Source Metadata
+
+**Decision:**  
+After import, tasks are owned by qzWhatNext. The source field is metadata only, preserved for future bidirectional sync capabilities.
+
+**Rationale:**  
+Task ownership by qzWhatNext enables full control over scheduling and prioritization. Source metadata preservation supports future bidirectional sync without compromising current functionality.
+
+**Implications:**  
+- Tasks can be created directly via API (no source required)
+- Source field tracks origin but doesn't control behavior
+- Future bidirectional sync can use source metadata to map changes back
+- Tasks are fully functional even if source system is unavailable
+
+**Status:** Locked
+
+---
+
+## D-028 — REST API for Task Management
+
+**Decision:**  
+MVP includes REST API endpoints for task management (create, read, update, delete), enabling programmatic access and integration with tools like iPhone shortcuts.
+
+**Rationale:**  
+API enables direct task creation (beyond import), supports custom integrations, and is required for the custom UI. Basic CRUD operations are essential for MVP functionality.
+
+**Implications:**  
+- API endpoints support task creation, viewing, updating, and deletion
+- API enables iPhone shortcuts and other programmatic access
+- Custom UI consumes API endpoints
+- API design supports future enhancements (authentication, versioning, etc.)
 
 **Status:** Locked
 

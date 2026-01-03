@@ -43,7 +43,7 @@ The engine reasons over two schedulable entity types:
 A Task has the following fields:
 
 - id: string
-- source: string (e.g. "todoist")
+- source: string (e.g. "google_sheets", "api", "todoist") - metadata only, tasks owned by qzWhatNext
 - title: string
 - notes: string or null
 - status: open | completed
@@ -62,6 +62,12 @@ A Task has the following fields:
 - manual_priority_locked: boolean
 - user_locked: boolean
 - manually_scheduled: boolean
+
+**Task Ownership and Persistence:**
+- Tasks are owned by qzWhatNext after import or creation
+- All tasks are persisted in database (SQLite for MVP, designed for PostgreSQL migration)
+- Source field is metadata only, preserved for future bidirectional sync
+- Tasks can be created directly via API (no source required)
 
 ---
 

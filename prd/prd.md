@@ -77,7 +77,8 @@ Existing tools can store tasks and events, but they do not:
 ## 6. MVP Scope
 
 ### In Scope
-- Import tasks from **Todoist**
+- Task import (Google Sheets, REST API)
+- Database persistence (SQLite)
 - Automatic task identification and classification
 - Continuous stack-ranking of tasks
 - Auto-scheduling into calendar free time
@@ -87,10 +88,10 @@ Existing tools can store tasks and events, but they do not:
 - One-line explanation for every decision
 - Auto-maintained calendar visualization (Google Calendar)
 - Simple custom UI (table/list view) for parameter refinement
+- REST API for task management
 
 ### Out of Scope
 - Task execution in third-party apps
-- Multi-source ingestion
 - Timeline / ribbon UI visualization
 - Task sharing or collaboration
 - Automation triggers or pub/sub
@@ -100,9 +101,21 @@ Existing tools can store tasks and events, but they do not:
 ## 7. Functional Requirements
 
 ### 7.1 Task Ingestion
-- Import tasks from Todoist
+
+**Import Sources:**
+- Import tasks from Google Sheets
+- Create tasks directly via REST API endpoints
+- Tasks are owned by qzWhatNext after import (source field is metadata only)
+
+**Data Persistence:**
+- All tasks are persisted in database (SQLite for MVP)
+- Database optimized for scheduling and prioritization queries
+- Tasks remain available even if source system is unavailable
+
+**Processing:**
 - Normalize tasks into canonical format
 - Maintain audit trail of changes
+- Source metadata preserved for future bidirectional sync
 
 ---
 
@@ -236,11 +249,11 @@ The MVP includes a simple custom UI for viewing and refining the schedule.
 
 - Context-aware follow-up task chaining
 - Expanded task capture:
+  - Todoist
   - Apple Notes
   - Apple Reminders
   - Google Tasks
   - Google Calendar
-  - Google Sheets
   - Google Docs
   - PDFs
 - Task sharing with gated priority feedback
@@ -249,6 +262,7 @@ The MVP includes a simple custom UI for viewing and refining the schedule.
 - Pub/sub automation
 - Timeline/ribbon UI visualization
 - Additional calendar integrations (Apple Calendar, Outlook, etc.)
+- Bidirectional sync to original sources
 
 ---
 

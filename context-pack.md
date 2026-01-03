@@ -255,7 +255,8 @@ Percentage completion is explicitly excluded.
 ## 13. MVP Scope
 
 Included:
-- Todoist ingestion
+- Task import (Google Sheets, REST API)
+- Database persistence (SQLite)
 - Automatic task identification
 - Continuous stack-ranking
 - Auto-scheduling
@@ -263,10 +264,10 @@ Included:
 - Explainable decisions
 - Auto-maintained calendar visualization (Google Calendar)
 - Simple custom UI (table/list view) for parameter refinement
+- REST API for task management
 
 Excluded:
 - Task execution
-- Multi-source ingestion
 - Timeline/ribbon UI visualization
 - Shared tasks
 
@@ -276,11 +277,11 @@ Excluded:
 
 - Context-aware follow-up task chaining
 - Expanded task capture:
+  - Todoist
   - Apple Notes
   - Apple Reminders
   - Google Tasks
   - Google Calendar
-  - Google Sheets
   - Google Docs
   - PDFs
 - Task sharing with gated priority feedback
@@ -289,6 +290,7 @@ Excluded:
 - Event-driven automation (pub/sub)
 - Timeline/ribbon UI visualization
 - Additional calendar integrations (Apple Calendar, Outlook, etc.)
+- Bidirectional sync to original sources
 
 ---
 
