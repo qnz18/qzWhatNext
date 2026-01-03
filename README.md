@@ -2,13 +2,17 @@
 
 Continuously tells you what you should be doing **right now** and **immediately next**—across work, children, health, and home responsibilities—while prioritizing **user trust** through deterministic, explainable behavior.
 
-## What this is (MVP)
+## What this is (Current Implementation)
 
-qzWhatNext (MVP) does three things, end-to-end:
+qzWhatNext currently provides:
 
-1. **Ingest tasks from Todoist**
-2. **Infer structured attributes** (category, duration, energy, risk, impact, dependencies) when allowed
-3. **Deterministically stack-rank + auto-schedule** tasks into real calendar time, including **Transition Time**, while enforcing user constraints and energy budgeting
+1. **Task management** (in-memory storage)
+2. **Automatic stack-ranking** of tasks based on priority tiers
+3. **Auto-scheduling** into calendar time slots
+4. **Google Calendar sync** (output only)
+5. **Overflow detection** and notification
+
+**Note:** This is a work-in-progress MVP. Planned features (Google Sheets import, REST API for task CRUD, SQLite database) are documented in the canonical documents but not yet implemented.
 
 ## Product principles (non-negotiable)
 
@@ -37,10 +41,9 @@ AI-excluded tasks:
 AI may propose (with confidence scores):
 - category
 - estimated duration
-- energy intensity
+- energy intensity (not used for scheduling in current implementation)
 - risk / impact
 - dependencies
-- transition candidates
 
 AI may **not**:
 - assign priority tiers
@@ -69,15 +72,17 @@ AI may **not**:
   - defer lower-tier tasks
   - notify the user (no silent failures)
 
-## Transition Time (first-class)
+## Current Limitations
 
-Transition Time is system-generated time between tasks/states (e.g., driving, setup/teardown, changing clothes, context switching):
+**Not yet implemented:**
+- Transition Time modeling (deferred to future releases)
+- Energy budgeting (deferred to future releases)
+- Google Sheets import
+- REST API for task CRUD operations
+- SQLite database persistence (currently using in-memory storage)
+- Smart snooze (manual rescheduling only)
 
-- **schedulable and visible**
-- **not stack-ranked**
-- **not snoozable**
-- consumes time and energy
-- influenced by deterministic templates + user-defined rules (and optional AI suggestions with confidence)
+See canonical documents for planned features and future capabilities.
 
 ## Canonical documents (source of truth)
 
@@ -94,8 +99,7 @@ If behavior is unclear or disputed, consult in this order:
 
 ### Prerequisites
 - Python 3.9 or higher
-- Todoist API token
-- Google Cloud project with Calendar API enabled
+- Google Cloud project with Calendar API enabled (for calendar sync)
 
 ### Installation
 
@@ -110,13 +114,18 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-3. Set up environment variables:
-   - Copy `.env.example` to `.env` (or create `.env` manually)
-   - Add your `TODOIST_API_TOKEN`
-   - Add Google Calendar credentials path and calendar ID
+3. Set up environment variables (optional, for Google Calendar):
+   - Create `.env` file in project root
+   - Add Google Calendar credentials path and calendar ID:
+     ```
+     GOOGLE_CALENDAR_CREDENTIALS_PATH=credentials.json
+     GOOGLE_CALENDAR_ID=primary
+     ```
 
 4. For Google Calendar integration:
    - Enable Google Calendar API in Google Cloud Console
+   - Create OAuth2 credentials (Web app type)
+   - Add `http://localhost` to authorized redirect URIs
    - Download OAuth2 credentials as `credentials.json` to project root
 
 5. Run the application:
@@ -126,6 +135,8 @@ uvicorn qzwhatnext.api.app:app --reload
 
 The API will be available at `http://localhost:8000`
 API documentation at `http://localhost:8000/docs`
+
+**Note:** Tasks are currently stored in-memory and will be lost on server restart. Database persistence is planned but not yet implemented.
 
 ## Suggested repo layout
 

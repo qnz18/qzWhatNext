@@ -13,17 +13,16 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-## 2. Configure
+## 2. Configure (Optional - for Google Calendar sync)
 
 Create a `.env` file in the project root:
 
 ```bash
-TODOIST_API_TOKEN=your_todoist_token_here
 GOOGLE_CALENDAR_CREDENTIALS_PATH=credentials.json
 GOOGLE_CALENDAR_ID=primary
 ```
 
-Get your Todoist API token from: https://todoist.com/app/settings/integrations
+**Note:** Google Calendar setup is optional. You can use the scheduling features without calendar sync.
 
 ## 3. Google Calendar Setup
 
@@ -48,10 +47,17 @@ Visit `http://localhost:8000` in your browser.
 
 ## 5. First Use
 
-1. Click "Import from Todoist" to fetch your tasks
-2. Click "Build Schedule" to create a schedule
-3. Click "View Schedule" to see what's scheduled
-4. Click "Sync to Google Calendar" to write events (first time will open browser for OAuth2)
+**Current Implementation:**
+- Tasks must be added programmatically (no UI for task creation yet)
+- Use the API endpoints to create tasks (see API docs at `/docs`)
+- Click "Build Schedule" to create a schedule from tasks in memory
+- Click "View Schedule" to see what's scheduled
+- Click "Sync to Google Calendar" to write events (first time will open browser for OAuth2)
+
+**Note:** 
+- Tasks are stored in-memory (lost on server restart)
+- Google Sheets import and REST API for task CRUD are planned but not yet implemented
+- See canonical documents for planned features
 
 ## Next Steps
 

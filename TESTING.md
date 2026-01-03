@@ -7,8 +7,7 @@ This guide covers testing the minimal MVP implementation.
 1. Python 3.9+ installed
 2. Virtual environment created and activated
 3. Dependencies installed: `pip install -r requirements.txt`
-4. `.env` file configured with:
-   - `TODOIST_API_TOKEN`
+4. `.env` file configured (optional, for Google Calendar):
    - `GOOGLE_CALENDAR_CREDENTIALS_PATH` (path to credentials.json)
    - `GOOGLE_CALENDAR_ID` (defaults to "primary")
 
@@ -24,8 +23,10 @@ The application will be available at `http://localhost:8000`
 
 ### 2. Test via Web UI
 
+**Note:** Task creation UI is not yet implemented. Tasks must be added programmatically via API.
+
 1. Open `http://localhost:8000` in your browser
-2. Click "Import from Todoist" to fetch tasks
+2. Add tasks via API (see API docs at `/docs`)
 3. Click "Build Schedule" to create a schedule
 4. Click "View Schedule" to see the scheduled blocks
 5. Click "Sync to Google Calendar" to write events (requires OAuth2 setup)
@@ -37,10 +38,8 @@ The application will be available at `http://localhost:8000`
 curl http://localhost:8000/health
 ```
 
-#### Import Tasks
-```bash
-curl -X POST http://localhost:8000/import
-```
+#### Create Task (via API)
+**Note:** Task CRUD endpoints are not yet implemented. Tasks must be added programmatically.
 
 #### Build Schedule
 ```bash
@@ -71,14 +70,14 @@ To verify deterministic behavior:
 
 ```python
 # Example test script
-from qzwhatnext.integrations.todoist import TodoistClient
 from qzwhatnext.engine.ranking import stack_rank
 from qzwhatnext.engine.scheduler import schedule_tasks
+from qzwhatnext.models.task import Task, TaskStatus, TaskCategory
+from datetime import datetime
 
-# Import tasks
-client = TodoistClient()
-tasks1 = client.import_tasks()
-tasks2 = client.import_tasks()
+# Create test tasks (programmatically - no import yet)
+tasks1 = [Task(...), Task(...)]  # Create tasks with same data
+tasks2 = [Task(...), Task(...)]  # Create tasks with same data
 
 # Build schedules
 ranked1 = stack_rank(tasks1)
@@ -110,14 +109,15 @@ Test that tasks are assigned to correct tiers:
 
 ## Testing Overflow Detection
 
-1. Import many tasks (more than can fit in 7 days)
+1. Add many tasks programmatically (more than can fit in available time)
 2. Build schedule
 3. Verify overflow tasks are identified in the response
 
 ## Common Issues
 
-### Todoist API Errors
-- Verify `TODOIST_API_TOKEN` is set correctly
+### Task Storage
+- Tasks are stored in-memory and will be lost on server restart
+- Database persistence is planned but not yet implemented
 - Check API token is valid and not expired
 - Verify network connectivity
 

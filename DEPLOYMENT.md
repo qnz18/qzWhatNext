@@ -25,8 +25,7 @@ gcloud config set project qzwhatnext
 gcloud app create --region=us-central
 ```
 
-3. Set up environment variables in `app.yaml` or use Secret Manager:
-   - `TODOIST_API_TOKEN`
+3. Set up environment variables in `app.yaml` or use Secret Manager (optional, for Google Calendar):
    - `GOOGLE_CALENDAR_ID` (defaults to "primary")
 
 4. Upload credentials:
@@ -69,7 +68,7 @@ gcloud run deploy qzwhatnext \
   --platform managed \
   --region us-central1 \
   --allow-unauthenticated \
-  --set-env-vars TODOIST_API_TOKEN=your_token,GOOGLE_CALENDAR_ID=primary
+  --set-env-vars GOOGLE_CALENDAR_ID=primary
 ```
 
 ### Access
@@ -80,7 +79,7 @@ Cloud Run will provide a URL after deployment.
 
 Set these in your deployment:
 
-- `TODOIST_API_TOKEN`: Your Todoist API token
+   - `GOOGLE_CALENDAR_CREDENTIALS_PATH`: Path to OAuth2 credentials (optional)
 - `GOOGLE_CALENDAR_CREDENTIALS_PATH`: Path to OAuth2 credentials (or use Secret Manager)
 - `GOOGLE_CALENDAR_ID`: Calendar ID (defaults to "primary")
 - `DEBUG`: Set to "False" in production
@@ -109,7 +108,7 @@ Set these in your deployment:
 - Verify OAuth2 consent screen is configured
 
 ### Import Failures
-- Verify Todoist API token is valid
+- Verify Google Calendar credentials are valid (if using calendar sync)
 - Check network connectivity
 - Review API rate limits
 
