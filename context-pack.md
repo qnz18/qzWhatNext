@@ -261,11 +261,13 @@ Included:
 - Auto-scheduling
 - Overflow detection
 - Explainable decisions
+- Auto-maintained calendar visualization (Google Calendar)
+- Simple custom UI (table/list view) for parameter refinement
 
 Excluded:
 - Task execution
 - Multi-source ingestion
-- Timeline/ribbon UI
+- Timeline/ribbon UI visualization
 - Shared tasks
 
 ---
@@ -285,6 +287,8 @@ Excluded:
 - Agentic task execution in third-party apps
 - Continuous state machine and life timeline
 - Event-driven automation (pub/sub)
+- Timeline/ribbon UI visualization
+- Additional calendar integrations (Apple Calendar, Outlook, etc.)
 
 ---
 
@@ -300,3 +304,50 @@ This document is the canonical context for:
 - Ongoing planning and design
 
 If a future idea conflicts with this pack, the pack must be updated explicitly.
+
+---
+
+## 16. Primary Visualization and User Interface
+
+### 16.1 Calendar as Primary Visualization
+
+The primary visualization of qzWhatNext is an **auto-maintained calendar**. The schedule is automatically synced to the user's calendar after each rebuild, ensuring the calendar always reflects the current stack-ranked schedule.
+
+**MVP Implementation:**
+- Google Calendar integration
+- Automatic event creation, update, and deletion
+- Calendar events include task metadata via extended properties
+
+**Future Extensibility:**
+- Architecture supports multiple calendar backends
+- Additional calendar systems (Apple Calendar, Outlook, etc.) are future capabilities
+
+### 16.2 Custom User Interface
+
+A simple custom UI provides essential functionality for viewing and refining the schedule:
+
+**Display Format:**
+- Chronological list/table view of scheduled tasks
+- Shows tasks in stack-ranked order with time assignments
+- Displays transition time and buffer time explicitly
+
+**Parameter Refinement:**
+- View task metadata (priority tier, duration, category, energy intensity, etc.)
+- Edit task parameters:
+  - Due date override
+  - Priority override
+  - Stack rank value
+  - Duration estimate
+  - Transition details
+  - Category override
+- See immediate effect of parameter changes on the schedule
+
+**User Control:**
+- Full control over all task parameters when necessary
+- Changes trigger schedule rebuild with updated parameters
+- All overrides are logged and reversible
+
+**MVP Scope:**
+- Simple table/list view (not timeline/ribbon)
+- Essential parameter editing capabilities
+- Timeline/ribbon visualization is deferred to future releases

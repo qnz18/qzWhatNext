@@ -85,11 +85,13 @@ Existing tools can store tasks and events, but they do not:
 - Energy-aware scheduling
 - Overflow detection and notification
 - One-line explanation for every decision
+- Auto-maintained calendar visualization (Google Calendar)
+- Simple custom UI (table/list view) for parameter refinement
 
 ### Out of Scope
 - Task execution in third-party apps
 - Multi-source ingestion
-- Timeline / ribbon visualization
+- Timeline / ribbon UI visualization
 - Task sharing or collaboration
 - Automation triggers or pub/sub
 
@@ -169,10 +171,44 @@ Tasks starting with `.` or explicitly flagged by the user are always excluded fr
 Every system decision must include a one-line explanation derived from structured reasons.
 
 Examples:
-- “Scheduled now due to near deadline and high child-care impact.”
-- “Deferred due to energy overload and lower relative importance.”
+- "Scheduled now due to near deadline and high child-care impact."
+- "Deferred due to energy overload and lower relative importance."
 
 Free-form AI explanations are not allowed in MVP.
+
+---
+
+### 7.9 Custom User Interface
+
+The MVP includes a simple custom UI for viewing and refining the schedule.
+
+**Display Format:**
+- Chronological list/table view of scheduled tasks
+- Tasks displayed in stack-ranked order with assigned time slots
+- Transition time and buffer time explicitly shown
+
+**Parameter Refinement:**
+- View task metadata (priority tier, duration, category, energy intensity, risk score, impact score, etc.)
+- Edit task parameters:
+  - Due date override
+  - Priority override
+  - Stack rank value
+  - Duration estimate
+  - Transition details
+  - Category override
+  - Energy intensity
+  - Risk and impact scores
+- See immediate effect of parameter changes on the schedule
+- Changes trigger automatic schedule rebuild
+
+**User Control:**
+- Full control over all task parameters when necessary
+- All overrides are logged and reversible
+- Changes are reflected immediately in both the custom UI and calendar visualization
+
+**MVP Limitations:**
+- Simple table/list view only (not timeline/ribbon visualization)
+- Timeline/ribbon UI is deferred to future releases
 
 ---
 
@@ -211,6 +247,8 @@ Free-form AI explanations are not allowed in MVP.
 - Agentic task execution
 - Continuous state machine and timeline
 - Pub/sub automation
+- Timeline/ribbon UI visualization
+- Additional calendar integrations (Apple Calendar, Outlook, etc.)
 
 ---
 

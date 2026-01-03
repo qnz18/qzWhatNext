@@ -353,6 +353,59 @@ Prevents external priority hijacking.
 
 ---
 
+## D-023 — Primary Visualization Is Auto-Maintained Calendar
+
+**Decision:**  
+The primary visualization of qzWhatNext is an auto-maintained calendar. The MVP uses Google Calendar, but the architecture supports extensibility to other calendar systems.
+
+**Rationale:**  
+Calendar visualization provides familiar, time-bound context that users already understand. Auto-maintenance ensures the schedule stays current without manual intervention.
+
+**Implications:**  
+- Schedule is automatically synced to calendar after each rebuild
+- Calendar events are created/updated/deleted by the system
+- User can view schedule in their preferred calendar application
+- Architecture must support multiple calendar backends (MVP: Google Calendar only)
+
+**Status:** Locked
+
+---
+
+## D-024 — Calendar Extensibility
+
+**Decision:**  
+The system architecture supports multiple calendar integrations. MVP includes Google Calendar only; other calendar systems (Apple Calendar, Outlook, etc.) are future capabilities.
+
+**Rationale:**  
+Users have diverse calendar preferences. Supporting multiple backends increases adoption while keeping MVP scope manageable.
+
+**Implications:**  
+- Calendar integration is abstracted behind an interface
+- MVP implementation focuses on Google Calendar
+- Future calendar integrations follow the same abstraction pattern
+
+**Status:** Locked
+
+---
+
+## D-025 — Custom UI Scope for MVP
+
+**Decision:**  
+MVP includes a simple custom UI (table/list view) for parameter refinement and schedule exploration. Timeline/ribbon visualization is deferred to future releases.
+
+**Rationale:**  
+Users need a way to view output and refine prioritization parameters. A simple table/list view is faster to implement than a timeline/ribbon UI while providing essential functionality.
+
+**Implications:**  
+- Custom UI displays tasks in chronological list format
+- Users can view and edit task metadata (priority, duration, category, etc.)
+- Users can see the effect of parameter changes on the schedule
+- Timeline/ribbon UI is explicitly out of MVP scope
+
+**Status:** Locked
+
+---
+
 ## Canonical Rule
 
 If a future behavior conflicts with a decision in this log:
