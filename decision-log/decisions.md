@@ -161,10 +161,10 @@ Allows self-correction without unnecessary friction or trust erosion.
 
 ---
 
-## D-010 — Transition Time Is Not a Task Category
+## D-010 — Transition Time Is Not a Task Category (Future)
 
 **Decision:**  
-Transition Time is a system-generated, schedulable entity but **not a normal task**.
+Transition Time is a system-generated, schedulable entity but **not a normal task**. Deferred to future releases.
 
 **Rationale:**  
 Transition Time is real but must never compete with tasks or be deprioritized.
@@ -175,14 +175,14 @@ Transition Time is real but must never compete with tasks or be deprioritized.
 - Not optional
 - Visible and explainable
 
-**Status:** Locked
+**Status:** Locked (Future)
 
 ---
 
-## D-011 — Transition Time Is First-Class
+## D-011 — Transition Time Is First-Class (Future)
 
 **Decision:**  
-Transition Time must be explicitly modeled and scheduled.
+Transition Time must be explicitly modeled and scheduled. Deferred to future releases; MVP uses task padding instead.
 
 **Examples:**  
 - Changing clothes  
@@ -191,19 +191,19 @@ Transition Time must be explicitly modeled and scheduled.
 - Waiting  
 
 **Rationale:**  
-Eliminates hidden or “phantom” time and improves schedule realism.
+Eliminates hidden or "phantom" time and improves schedule realism.
 
 **Implications:**  
 Consumes time and energy; affects capacity and overflow.
 
-**Status:** Locked
+**Status:** Locked (Future)
 
 ---
 
-## D-012 — User Overrides for Transition Rules
+## D-012 — User Overrides for Transition Rules (Future)
 
 **Decision:**  
-Users may define plain-English rules that influence Transition Time.
+Users may define plain-English rules that influence Transition Time. Deferred to future releases.
 
 **Rationale:**  
 Users know their routines better than any model.
@@ -211,7 +211,7 @@ Users know their routines better than any model.
 **Implications:**  
 Rules are persisted, applied consistently, and editable.
 
-**Status:** Locked
+**Status:** Locked (Future)
 
 ---
 
@@ -432,16 +432,17 @@ Own database provides independence from external systems, enables optimization f
 ## D-027 — Task Ownership and Source Metadata
 
 **Decision:**  
-After import, tasks are owned by qzWhatNext. The source field is metadata only, preserved for future bidirectional sync capabilities.
+After import, tasks are owned by qzWhatNext. Source metadata (source_type and source_id) is preserved for future bidirectional sync capabilities but doesn't control behavior.
 
 **Rationale:**  
 Task ownership by qzWhatNext enables full control over scheduling and prioritization. Source metadata preservation supports future bidirectional sync without compromising current functionality.
 
 **Implications:**  
-- Tasks can be created directly via API (no source required)
-- Source field tracks origin but doesn't control behavior
+- Tasks can be created directly via API (source_type="api", source_id=null)
+- Source metadata tracks origin but doesn't control behavior
 - Future bidirectional sync can use source metadata to map changes back
 - Tasks are fully functional even if source system is unavailable
+- See D-030 for source metadata structure (source_type + source_id)
 
 **Status:** Locked
 
@@ -462,6 +463,112 @@ API enables direct task creation (beyond import), supports custom integrations, 
 - API design supports future enhancements (authentication, versioning, etc.)
 
 **Status:** Locked
+
+---
+
+## D-029 — Calendar Sync Strategy (MVP: Last Write Wins)
+
+**Decision:**  
+For MVP, calendar sync uses a "last write wins" strategy. The system tracks calendar event IDs and overwrites user changes on rebuild. The system is the source of truth for scheduling.
+
+**Rationale:**  
+Simplifies MVP implementation while maintaining system authority over scheduling. Users can view the calendar, but schedule changes must be made through qzWhatNext to maintain consistency.
+
+**Implications:**  
+- System tracks calendar_event_id in ScheduledBlock
+- On rebuild, system updates/deletes its own calendar events
+- User changes to calendar events are overwritten on next rebuild
+- Future bidirectional sync will detect user changes and cascade updates to sequential tasks
+
+**Status:** Locked
+
+---
+
+## D-030 — Source Metadata Structure
+
+**Decision:**  
+Task source metadata is split into `source_type` (system identifier) and `source_id` (external identifier). This structure enables better deduplication, querying, and future bidirectional sync.
+
+**Rationale:**  
+Separating type and ID provides clearer structure and enables future bidirectional sync without data model changes. More flexible than a single source string.
+
+**Implications:**  
+- `source_type`: string (e.g., "google_sheets", "api", "todoist")
+- `source_id`: string | null (external ID in source system, null for API-created tasks)
+- Enables deduplication by (source_type, source_id) pairs
+- API-created tasks have `source_type="api"`, `source_id=null`
+
+**Status:** Locked
+
+---
+
+## D-031 — Calendar Event ID Tracking
+
+**Decision:**  
+ScheduledBlock model includes `calendar_event_id` field to track the calendar event created for that scheduled block.
+
+**Rationale:**  
+Enables system to update or delete calendar events on rebuild, preventing duplicate events and maintaining calendar synchronization.
+
+**Implications:**  
+- ScheduledBlock tracks calendar_event_id for each synced calendar event
+- System can update/delete events it created
+- Required for "last write wins" calendar sync strategy
+
+**Status:** Locked
+
+---
+
+## D-032 — Duplicate Task Handling
+
+**Decision:**  
+Duplicate tasks are handled automatically if the duplicate is obvious (matching source_type, source_id, and title), with logging. Non-obvious duplicates prompt user notification with suggested actions (merge, replace, keep both).
+
+**Rationale:**  
+Automatically handling obvious duplicates (same task imported twice) reduces friction while preserving user control for ambiguous cases.
+
+**Implications:**  
+- Automatic deduplication based on (source_type, source_id) pair match
+- All deduplication actions are logged in audit trail
+- User notification for non-obvious duplicates with suggested resolution options
+- Deduplication preserves the most recent or most complete task data
+
+**Status:** Locked
+
+---
+
+## D-033 — Calendar Events Do Not Trigger Rebuilds
+
+**Decision:**  
+Calendar events created by the system do not trigger rebuilds. The system manages tasks first, then updates the calendar. Calendar events are output only in MVP.
+
+**Rationale:**  
+Prevents rebuild loops and maintains clear data flow: tasks → schedule → calendar. Calendar is a visualization/output, not an input source for MVP.
+
+**Implications:**  
+- System-created calendar events are excluded from rebuild triggers
+- Rebuild triggers include: task changes, user-blocked time changes, manually scheduled events (user-created)
+- Calendar sync is one-way: system → calendar (MVP)
+- Future bidirectional sync will have separate mechanisms
+
+**Status:** Locked
+
+---
+
+## D-034 — Task Padding and Transition Time (Future)
+
+**Decision:**  
+Task padding and explicit Transition Time modeling are deferred to future releases. MVP uses base task durations only.
+
+**Rationale:**  
+Further simplifies MVP scope. Transition time considerations (padding or explicit modeling) can be added based on user feedback.
+
+**Implications:**  
+- MVP uses base task durations as-is
+- Task padding percentage and explicit Transition Time entities are future capabilities
+- Simplifies scheduling algorithm and data models for MVP
+
+**Status:** Locked (Future)
 
 ---
 

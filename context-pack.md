@@ -142,52 +142,26 @@ Tasks excluded from AI (`.` prefix or manual flag) are never re-tiered automatic
 
 ---
 
-## 7. Transition Time (First-Class Concept)
+## 7. Task Duration (MVP)
 
-### 7.1 Definition
-
-**Transition Time** is system-generated time required to move between tasks or states.
-
-Examples:
-- Changing clothes
-- Driving
-- Setup and teardown
-- Waiting
-- Context switching
-
-Transition Time:
-- Is not a user-authored task
-- Is not stack-ranked
-- Is not optional
-- Is schedulable and visible
-- Consumes time and energy
+MVP uses base task durations as-is. No padding or Transition Time modeling in MVP scope.
 
 ---
 
-### 7.2 Transition Time Rules
+## 8. Transition Time and Task Padding (Future Concept)
 
-- Transition Time is automatically inserted where required
-- Transition Time inherits constraints from surrounding tasks
-- Transition Time cannot be snoozed or skipped directly
-- Users influence transitions via **rules**, not direct edits
+**Note:** Task padding and explicit Transition Time modeling are deferred to future releases.
 
----
-
-### 7.3 User Overrides (Plain English)
-
-Users may define rules such as:
-- “Always assume 15 minutes to change clothes after workouts”
-- “Batch errands when possible”
-- “Never schedule cleaning immediately after dinner”
-
-The system must:
-- Persist these rules
-- Apply them consistently
-- Allow review and editing
+Future releases will include:
+- Task padding percentage (user-configurable, rounded to 15-min increments)
+- Explicit Transition entities (system-generated time between tasks)
+- Transition types (changing clothes, driving, setup/teardown, etc.)
+- User-defined transition rules
+- Transition inheritance and constraints
 
 ---
 
-## 8. Scheduling Fundamentals
+## 9. Scheduling Fundamentals
 
 - Default scheduling unit: 30 minutes
 - Tasks may be split across blocks
@@ -203,7 +177,7 @@ When workload exceeds capacity:
 
 ---
 
-## 9. Energy Awareness
+## 10. Energy Awareness
 
 - Tasks have energy intensity: low / medium / high
 - Each day has a finite energy budget
@@ -214,7 +188,7 @@ Energy rules are advisory but enforced deterministically.
 
 ---
 
-## 10. Smart Snooze
+## 11. Smart Snooze
 
 - Triggers:
   - Missed task
@@ -226,7 +200,7 @@ Energy rules are advisory but enforced deterministically.
 
 ---
 
-## 11. Explainability (Trust Requirement)
+## 12. Explainability (Trust Requirement)
 
 Every system decision must produce a **one-line explanation** derived from structured reasons.
 
@@ -238,7 +212,7 @@ No free-form AI explanations are allowed in v1.
 
 ---
 
-## 12. Success Metrics (MVP)
+## 13. Success Metrics (MVP)
 
 Primary:
 - Total number of tasks completed trends upward over time
@@ -252,14 +226,14 @@ Percentage completion is explicitly excluded.
 
 ---
 
-## 13. MVP Scope
+## 14. MVP Scope
 
 Included:
 - Task import (Google Sheets, REST API)
 - Database persistence (SQLite)
 - Automatic task identification
 - Continuous stack-ranking
-- Auto-scheduling
+- Auto-scheduling (using base task durations)
 - Overflow detection
 - Explainable decisions
 - Auto-maintained calendar visualization (Google Calendar)
@@ -273,7 +247,7 @@ Excluded:
 
 ---
 
-## 14. Future State Capabilities (Captured)
+## 15. Future State Capabilities (Captured)
 
 - Context-aware follow-up task chaining
 - Expanded task capture:
@@ -291,10 +265,12 @@ Excluded:
 - Timeline/ribbon UI visualization
 - Additional calendar integrations (Apple Calendar, Outlook, etc.)
 - Bidirectional sync to original sources
+- Task padding percentage (user-configurable)
+- Explicit Transition Time modeling (entities, types, rules)
 
 ---
 
-## 15. Canonical Rule
+## 16. Canonical Rule
 
 **Chats generate artifacts.  
 Artifacts replace chats.**
@@ -309,7 +285,7 @@ If a future idea conflicts with this pack, the pack must be updated explicitly.
 
 ---
 
-## 16. Primary Visualization and User Interface
+## 17. Primary Visualization and User Interface
 
 ### 16.1 Calendar as Primary Visualization
 
@@ -319,10 +295,13 @@ The primary visualization of qzWhatNext is an **auto-maintained calendar**. The 
 - Google Calendar integration
 - Automatic event creation, update, and deletion
 - Calendar events include task metadata via extended properties
+- System uses "last write wins" strategy (system overwrites user changes on rebuild)
+- System tracks calendar event IDs to enable update/delete operations
 
 **Future Extensibility:**
 - Architecture supports multiple calendar backends
 - Additional calendar systems (Apple Calendar, Outlook, etc.) are future capabilities
+- Future: Bidirectional sync with cascading updates to sequential tasks
 
 ### 16.2 Custom User Interface
 
@@ -331,7 +310,6 @@ A simple custom UI provides essential functionality for viewing and refining the
 **Display Format:**
 - Chronological list/table view of scheduled tasks
 - Shows tasks in stack-ranked order with time assignments
-- Displays transition time and buffer time explicitly
 
 **Parameter Refinement:**
 - View task metadata (priority tier, duration, category, energy intensity, etc.)
@@ -340,7 +318,6 @@ A simple custom UI provides essential functionality for viewing and refining the
   - Priority override
   - Stack rank value
   - Duration estimate
-  - Transition details
   - Category override
 - See immediate effect of parameter changes on the schedule
 

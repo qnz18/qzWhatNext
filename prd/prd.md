@@ -81,8 +81,7 @@ Existing tools can store tasks and events, but they do not:
 - Database persistence (SQLite)
 - Automatic task identification and classification
 - Continuous stack-ranking of tasks
-- Auto-scheduling into calendar free time
-- Explicit modeling of Transition Time
+- Auto-scheduling into calendar free time (using base task durations)
 - Energy-aware scheduling
 - Overflow detection and notification
 - One-line explanation for every decision
@@ -105,7 +104,12 @@ Existing tools can store tasks and events, but they do not:
 **Import Sources:**
 - Import tasks from Google Sheets
 - Create tasks directly via REST API endpoints
-- Tasks are owned by qzWhatNext after import (source field is metadata only)
+- Tasks are owned by qzWhatNext after import (source metadata is preserved but doesn't control behavior)
+
+**Source Metadata:**
+- `source_type`: system identifier (e.g., "google_sheets", "api", "todoist")
+- `source_id`: external ID in source system (null for API-created tasks)
+- Enables deduplication and future bidirectional sync
 
 **Data Persistence:**
 - All tasks are persisted in database (SQLite for MVP)
@@ -114,8 +118,22 @@ Existing tools can store tasks and events, but they do not:
 
 **Processing:**
 - Normalize tasks into canonical format
-- Maintain audit trail of changes
+- Detect and handle duplicate tasks (auto-dedupe obvious duplicates, notify user for ambiguous cases)
+- Maintain audit trail of changes (including deduplication actions)
 - Source metadata preserved for future bidirectional sync
+
+**Duplicate Task Handling:**
+- Automatic deduplication for obvious duplicates (matching source_type, source_id, title)
+- User notification for non-obvious duplicates with suggested actions (merge, replace, keep both)
+- All deduplication actions are logged
+
+**Calendar Sync (MVP):**
+- System uses "last write wins" strategy
+- System tracks calendar event IDs and overwrites user changes on rebuild
+- System is source of truth for scheduling
+- Calendar events are output only (do not trigger rebuilds)
+- System manages tasks first, then updates calendar
+- Future: Bidirectional sync with cascading updates to sequential tasks
 
 ---
 
@@ -150,14 +168,11 @@ Tasks starting with `.` or explicitly flagged by the user are always excluded fr
 
 ---
 
-### 7.5 Transition Time
-- Transition Time is system-generated, not user-authored
-- Examples:
-  - Changing clothes
-  - Driving
-  - Setup / teardown
-- Transition Time is schedulable, visible, and consumes energy
-- Transition Time cannot be snoozed or skipped directly
+### 7.5 Task Duration (MVP)
+
+MVP uses base task durations as-is. No padding or Transition Time modeling in MVP scope.
+
+Task padding and explicit Transition Time modeling are deferred to future releases.
 
 ---
 
@@ -198,7 +213,6 @@ The MVP includes a simple custom UI for viewing and refining the schedule.
 **Display Format:**
 - Chronological list/table view of scheduled tasks
 - Tasks displayed in stack-ranked order with assigned time slots
-- Transition time and buffer time explicitly shown
 
 **Parameter Refinement:**
 - View task metadata (priority tier, duration, category, energy intensity, risk score, impact score, etc.)
@@ -207,7 +221,6 @@ The MVP includes a simple custom UI for viewing and refining the schedule.
   - Priority override
   - Stack rank value
   - Duration estimate
-  - Transition details
   - Category override
   - Energy intensity
   - Risk and impact scores
@@ -263,6 +276,8 @@ The MVP includes a simple custom UI for viewing and refining the schedule.
 - Timeline/ribbon UI visualization
 - Additional calendar integrations (Apple Calendar, Outlook, etc.)
 - Bidirectional sync to original sources
+- Task padding percentage (user-configurable)
+- Explicit Transition Time modeling (entities, types, rules)
 
 ---
 

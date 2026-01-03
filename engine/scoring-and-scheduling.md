@@ -28,11 +28,10 @@ The engine must:
 
 ### 1.1 Entity Types
 
-The engine reasons over two schedulable entity types:
+The engine reasons over one schedulable entity type:
 - **Task** – user-authored; may be AI-assisted unless excluded
-- **Transition** – system-generated; non-optional; not user-authored
 
-**Transition is not a Task category.**
+**Note:** Transition Time modeling and task padding are deferred to future releases. MVP uses base task durations only.
 
 ---
 
@@ -43,7 +42,8 @@ The engine reasons over two schedulable entity types:
 A Task has the following fields:
 
 - id: string
-- source: string (e.g. "google_sheets", "api", "todoist") - metadata only, tasks owned by qzWhatNext
+- source_type: string (e.g. "google_sheets", "api", "todoist") - metadata only, tasks owned by qzWhatNext
+- source_id: string | null (external ID in source system, null for API-created tasks)
 - title: string
 - notes: string or null
 - status: open | completed
@@ -66,36 +66,30 @@ A Task has the following fields:
 **Task Ownership and Persistence:**
 - Tasks are owned by qzWhatNext after import or creation
 - All tasks are persisted in database (SQLite for MVP, designed for PostgreSQL migration)
-- Source field is metadata only, preserved for future bidirectional sync
-- Tasks can be created directly via API (no source required)
+- Source metadata (source_type, source_id) is metadata only, preserved for future bidirectional sync
+- Tasks can be created directly via API (source_type="api", source_id=null)
+- Source metadata enables deduplication and future bidirectional sync
+
+**Task Duration (MVP):**
+- MVP uses base task durations as-is
+- Task padding and Transition Time modeling are deferred to future releases
 
 ---
 
-### 2.2 Transition
-
-A Transition represents system-generated time between tasks:
-
-- id: string
-- from_entity_id: string
-- to_entity_id: string
-- type: change_clothes | drive | setup | teardown | wait | context_switch | other
-- estimated_duration_min: integer
-- confidence: float (0–1)
-- constraints_inherited: object
-
----
-
-### 2.3 Scheduled Block
+### 2.2 Scheduled Block
 
 A ScheduledBlock represents something placed on the calendar:
 
 - id: string
-- entity_type: task | transition
+- entity_type: task
 - entity_id: string
 - start_time: datetime
 - end_time: datetime
 - scheduled_by: system | user
 - locked: boolean
+- calendar_event_id: string | null (calendar event ID for sync, null if not synced)
+
+**Note:** MVP schedules tasks only. Explicit Transition entities are deferred to future releases.
 
 ---
 
@@ -149,10 +143,9 @@ On each rebuild trigger, the engine executes:
 6. Score tasks within tier
 7. Apply contextual adjustments
 8. Validate energy budget
-9. Generate Transition Time
-10. Construct calendar schedule
-11. Detect overflow
-12. Generate explanations and audit logs
+9. Construct calendar schedule
+10. Detect overflow
+11. Generate explanations and audit logs
 
 ---
 
@@ -162,9 +155,11 @@ A full rebuild occurs when:
 - a task is added or imported
 - a task is completed
 - a task is snoozed or rescheduled
-- a calendar event is added or changed
+- a user-created calendar event is added or changed (user-blocked time, manually scheduled events)
 - the user blocks or unblocks time
 - the engine detects schedule invalidation
+
+**Note:** Calendar events created by the system do NOT trigger rebuilds. The system manages tasks first, then updates the calendar. Calendar events are output only in MVP.
 
 Rebuilds must be deterministic given identical inputs.
 
@@ -290,30 +285,21 @@ Rules:
 
 ---
 
-## 12. Transition Time
+## 12. Task Duration (MVP)
 
 ### 12.1 Definition
 
-Transition Time is system-generated time required to move between tasks or states.
+MVP uses base task durations as-is. No padding or Transition Time modeling in MVP.
 
-Examples:
-- changing clothes
-- driving
-- setup / teardown
-- waiting
+**Duration Usage:**
+- Tasks use their estimated_duration_min field directly
+- No padding applied
+- No Transition Time entities
+- Simplest possible MVP scope
 
-Transition Time:
-- is schedulable and visible
-- is not stack-ranked
-- is not snoozable
-- consumes time and energy
+### 12.2 Future: Task Padding and Transition Time
 
-### 12.2 Sources
-
-Transitions come from:
-- deterministic templates
-- user-defined rules
-- AI suggestions (non-authoritative, confidence required)
+Task padding percentage and explicit Transition Time modeling (entities, types, rules) are deferred to future releases.
 
 ---
 
@@ -322,9 +308,8 @@ Transitions come from:
 The scheduler:
 1. iterates tasks in final stack-rank order
 2. finds the earliest feasible placement
-3. inserts required Transition Time
-4. splits tasks into 30-minute minimum chunks if needed
-5. marks tasks overflow if no valid placement exists
+3. splits tasks into 30-minute minimum chunks if needed
+4. marks tasks overflow if no valid placement exists
 
 ---
 
@@ -389,7 +374,6 @@ The engine must:
 - respect user-blocked and manual events
 - enforce AI exclusion rules
 - assign exactly one tier per task
-- model Transition Time explicitly
 - enforce energy budgeting
 - surface overflow clearly
 - explain every decision
@@ -400,6 +384,8 @@ The engine must:
 
 This v1 spec intentionally supports future capabilities:
 - follow-up task chaining
+- task padding percentage
+- explicit Transition Time modeling (entities, types, rules)
 - richer transition inference
 - continuous state timelines
 - shared tasks with gated feedback
