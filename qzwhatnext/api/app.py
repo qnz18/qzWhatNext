@@ -8,7 +8,6 @@ from pydantic import BaseModel, Field
 
 from qzwhatnext.models.task import Task
 from qzwhatnext.models.scheduled_block import ScheduledBlock
-from qzwhatnext.integrations.todoist import TodoistClient
 from qzwhatnext.integrations.google_calendar import GoogleCalendarClient
 from qzwhatnext.engine.ranking import stack_rank
 from qzwhatnext.engine.scheduler import schedule_tasks, SchedulingResult
@@ -26,12 +25,6 @@ schedule_store: Optional[SchedulingResult] = None
 
 
 # Response models
-class ImportResponse(BaseModel):
-    """Response for task import."""
-    imported_count: int
-    tasks: List[Task]
-
-
 class ScheduleResponse(BaseModel):
     """Response for schedule view."""
     scheduled_blocks: List[ScheduledBlock]
@@ -69,7 +62,6 @@ async def root():
         
         <div class="section">
             <h2>Actions</h2>
-            <button onclick="importTasks()">Import from Todoist</button>
             <button onclick="buildSchedule()">Build Schedule</button>
             <button onclick="syncCalendar()">Sync to Google Calendar</button>
             <button onclick="viewSchedule()">View Schedule</button>
@@ -86,27 +78,6 @@ async def root():
         </div>
         
         <script>
-            async function importTasks() {
-                const status = document.getElementById('status');
-                status.innerHTML = 'Importing tasks...';
-                try {
-                    const response = await fetch('/import', { method: 'POST' });
-                    if (!response.ok) {
-                        const errorData = await response.json();
-                        status.innerHTML = 'Error: ' + (errorData.detail || response.statusText);
-                        return;
-                    }
-                    const data = await response.json();
-                    if (data.imported_count !== undefined) {
-                        status.innerHTML = `Imported ${data.imported_count} tasks`;
-                    } else {
-                        status.innerHTML = 'Error: Invalid response from server';
-                    }
-                } catch (error) {
-                    status.innerHTML = 'Error: ' + error.message;
-                }
-            }
-            
             async function buildSchedule() {
                 const status = document.getElementById('status');
                 status.innerHTML = 'Building schedule...';
@@ -184,25 +155,6 @@ async def root():
 async def health():
     """Health check endpoint."""
     return {"status": "healthy", "version": "0.1.0"}
-
-
-@app.post("/import", response_model=ImportResponse)
-async def import_tasks():
-    """Import tasks from Todoist."""
-    try:
-        client = TodoistClient()
-        tasks = client.import_tasks()
-        
-        # Store tasks in memory
-        for task in tasks:
-            tasks_store[task.id] = task
-        
-        return ImportResponse(
-            imported_count=len(tasks),
-            tasks=list(tasks_store.values())
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to import tasks: {str(e)}")
 
 
 @app.post("/schedule", response_model=ScheduleResponse)

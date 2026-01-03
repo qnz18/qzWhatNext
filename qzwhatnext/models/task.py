@@ -35,8 +35,9 @@ class EnergyIntensity(str, Enum):
 class Task(BaseModel):
     """Canonical Task model."""
     
-    id: str = Field(..., description="Unique task identifier")
-    source: str = Field(..., description="Source system (e.g., 'todoist')")
+    id: str = Field(..., description="Unique task identifier (UUID v4)")
+    source_type: str = Field(..., description="Source system type (e.g., 'google_sheets', 'api', 'todoist')")
+    source_id: Optional[str] = Field(None, description="External ID in source system (null for API-created tasks)")
     title: str = Field(..., description="Task title")
     notes: Optional[str] = Field(None, description="Task notes or description")
     status: TaskStatus = Field(TaskStatus.OPEN, description="Task status")

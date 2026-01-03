@@ -17,10 +17,10 @@ It must be consistent with:
 The engine must:
 1. Produce a continuously updated **stack-ranked list** of tasks
 2. Convert that ranking into a **calendar schedule** that respects constraints
-3. Explicitly account for **Transition Time**
-4. Enforce **energy budgeting**
-5. Handle overload by deferring lower-value work and notifying the user
-6. Build trust via deterministic behavior, one-line explanations, auditability, and reversibility
+3. Handle overflow by deferring lower-value work and notifying the user
+4. Build trust via deterministic behavior, one-line explanations, auditability, and reversibility
+
+**Note:** Transition Time and energy budgeting are deferred to future releases. MVP uses base task durations and schedules based on time availability only.
 
 ---
 
@@ -69,6 +69,11 @@ A Task has the following fields:
 - Source metadata (source_type, source_id) is metadata only, preserved for future bidirectional sync
 - Tasks can be created directly via API (source_type="api", source_id=null)
 - Source metadata enables deduplication and future bidirectional sync
+
+**Task ID Generation:**
+- Task IDs are generated as UUIDs (v4)
+- UUIDs ensure global uniqueness and enable distributed systems in future
+- Task IDs are immutable once assigned
 
 **Task Duration (MVP):**
 - MVP uses base task durations as-is
