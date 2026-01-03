@@ -74,6 +74,8 @@ A Task has the following fields:
 - MVP uses base task durations as-is
 - Task padding and Transition Time modeling are deferred to future releases
 
+**Note:** `energy_intensity` is included in the Task model but is not used for scheduling decisions in MVP. Energy budgeting is deferred to future releases.
+
 ---
 
 ### 2.2 Scheduled Block
@@ -142,10 +144,9 @@ On each rebuild trigger, the engine executes:
 5. Assign governing priority tier
 6. Score tasks within tier
 7. Apply contextual adjustments
-8. Validate energy budget
-9. Construct calendar schedule
-10. Detect overflow
-11. Generate explanations and audit logs
+8. Construct calendar schedule
+9. Detect overflow
+10. Generate explanations and audit logs
 
 ---
 
@@ -268,20 +269,9 @@ Contextual adjustments **may not move tasks across tiers**.
 
 ---
 
-## 11. Energy Budgeting
+## 11. Energy Budgeting (Future)
 
-Each day has a finite energy capacity.
-
-Defaults:
-- Daily capacity: 100 units
-- Low: 10
-- Medium: 20
-- High: 35
-
-Rules:
-- avoid exceeding capacity
-- avoid back-to-back high-energy tasks
-- defer lower-tier work when overloaded
+Energy budgeting (daily capacity, energy intensity enforcement) is deferred to future releases. MVP schedules based on time availability only.
 
 ---
 
@@ -318,26 +308,19 @@ The scheduler:
 A task is overflow if:
 - no valid time block exists
 - deadline cannot be met
-- energy capacity is exceeded
 
 Overflow behavior:
 - surface task to user
 - provide one-line reason
 - allow manual reprioritization
 
+**Note:** Energy capacity checks are deferred to future releases.
+
 ---
 
-## 15. Smart Snooze
+## 15. Task Rescheduling (MVP)
 
-Snooze triggers:
-- missed task
-- explicit user request
-- detected overload
-
-Behavior:
-- suggest exactly **one** next-best time
-- avoid deadline violations
-- capture optional “why” feedback
+MVP supports manual task rescheduling by users. Automatic snooze suggestions are deferred to future releases.
 
 ---
 
@@ -347,7 +330,7 @@ Every decision must produce a **one-line explanation** derived from structured r
 
 Examples:
 - “Scheduled now due to near deadline and high child-care impact.”
-- “Deferred due to energy overload and lower relative importance.”
+- "Deferred due to insufficient time availability and lower relative importance."
 
 No free-form AI explanations are allowed in v1.
 
@@ -360,7 +343,7 @@ The engine must log:
 - AI inferences (with confidence)
 - tier assignments and changes
 - schedule builds
-- snooze and reschedule actions
+- reschedule actions
 - overflow detection
 
 Logs must be queryable for trust and debugging.
@@ -374,7 +357,6 @@ The engine must:
 - respect user-blocked and manual events
 - enforce AI exclusion rules
 - assign exactly one tier per task
-- enforce energy budgeting
 - surface overflow clearly
 - explain every decision
 
@@ -386,6 +368,9 @@ This v1 spec intentionally supports future capabilities:
 - follow-up task chaining
 - task padding percentage
 - explicit Transition Time modeling (entities, types, rules)
+- energy budgeting and capacity management
+- smart snooze with automatic suggestions
+- automatic duplicate task deduplication
 - richer transition inference
 - continuous state timelines
 - shared tasks with gated feedback

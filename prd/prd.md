@@ -82,7 +82,6 @@ Existing tools can store tasks and events, but they do not:
 - Automatic task identification and classification
 - Continuous stack-ranking of tasks
 - Auto-scheduling into calendar free time (using base task durations)
-- Energy-aware scheduling
 - Overflow detection and notification
 - One-line explanation for every decision
 - Auto-maintained calendar visualization (Google Calendar)
@@ -118,14 +117,15 @@ Existing tools can store tasks and events, but they do not:
 
 **Processing:**
 - Normalize tasks into canonical format
-- Detect and handle duplicate tasks (auto-dedupe obvious duplicates, notify user for ambiguous cases)
-- Maintain audit trail of changes (including deduplication actions)
+- Detect potential duplicate tasks and notify user (no automatic deduplication in MVP)
+- Maintain audit trail of changes
 - Source metadata preserved for future bidirectional sync
 
-**Duplicate Task Handling:**
-- Automatic deduplication for obvious duplicates (matching source_type, source_id, title)
-- User notification for non-obvious duplicates with suggested actions (merge, replace, keep both)
-- All deduplication actions are logged
+**Duplicate Task Handling (MVP):**
+- Detect potential duplicates (matching source_type, source_id, title)
+- Notify user of potential duplicates
+- User manually decides how to handle duplicates
+- Future: Automatic deduplication with merge/replace options
 
 **Calendar Sync (MVP):**
 - System uses "last write wins" strategy
@@ -176,22 +176,15 @@ Task padding and explicit Transition Time modeling are deferred to future releas
 
 ---
 
-### 7.6 Energy Awareness
-- Each task has an energy intensity
-- Each day has a finite energy capacity
-- High-energy clustering is avoided
-- Lower-priority work is deferred when capacity is exceeded
+### 7.6 Energy Awareness (Future)
+
+Energy budgeting (energy intensity, daily capacity, clustering rules) is deferred to future releases. MVP schedules based on time availability only.
 
 ---
 
-### 7.7 Smart Snooze
-- Snooze triggers:
-  - Missed task
-  - Explicit user request
-  - Detected overload
-- Only one snooze suggestion is provided
-- Snoozing avoids deadline violations where possible
-- Optional “why” feedback is captured
+### 7.7 Task Rescheduling (MVP)
+
+MVP supports manual task rescheduling by users. Automatic snooze suggestions are deferred to future releases.
 
 ---
 
@@ -200,7 +193,7 @@ Every system decision must include a one-line explanation derived from structure
 
 Examples:
 - "Scheduled now due to near deadline and high child-care impact."
-- "Deferred due to energy overload and lower relative importance."
+- "Deferred due to insufficient time availability and lower relative importance."
 
 Free-form AI explanations are not allowed in MVP.
 
@@ -278,6 +271,9 @@ The MVP includes a simple custom UI for viewing and refining the schedule.
 - Bidirectional sync to original sources
 - Task padding percentage (user-configurable)
 - Explicit Transition Time modeling (entities, types, rules)
+- Energy budgeting and capacity management
+- Smart snooze with automatic suggestions
+- Automatic duplicate task deduplication
 
 ---
 

@@ -177,26 +177,15 @@ When workload exceeds capacity:
 
 ---
 
-## 10. Energy Awareness
+## 10. Energy Awareness (Future)
 
-- Tasks have energy intensity: low / medium / high
-- Each day has a finite energy budget
-- High-energy tasks should not cluster
-- Energy overload defers lower-priority work
-
-Energy rules are advisory but enforced deterministically.
+Energy budgeting (energy intensity, daily capacity, clustering rules) is deferred to future releases. MVP schedules based on time availability only.
 
 ---
 
-## 11. Smart Snooze
+## 11. Task Rescheduling (MVP)
 
-- Triggers:
-  - Missed task
-  - Explicit user request
-  - Detected overload
-- Only one snooze option is suggested
-- Snoozing avoids deadline violations where possible
-- Optional “why” feedback is captured for learning
+MVP supports manual task rescheduling by users. Automatic snooze suggestions are deferred to future releases.
 
 ---
 
@@ -206,7 +195,7 @@ Every system decision must produce a **one-line explanation** derived from struc
 
 Examples:
 - “Scheduled now due to near deadline and high child-care impact.”
-- “Deferred due to energy overload and lower relative importance.”
+- "Deferred due to insufficient time availability and lower relative importance."
 
 No free-form AI explanations are allowed in v1.
 
@@ -234,7 +223,7 @@ Included:
 - Automatic task identification
 - Continuous stack-ranking
 - Auto-scheduling (using base task durations)
-- Overflow detection
+- Overflow detection and notification
 - Explainable decisions
 - Auto-maintained calendar visualization (Google Calendar)
 - Simple custom UI (table/list view) for parameter refinement
@@ -267,6 +256,9 @@ Excluded:
 - Bidirectional sync to original sources
 - Task padding percentage (user-configurable)
 - Explicit Transition Time modeling (entities, types, rules)
+- Energy budgeting and capacity management
+- Smart snooze with automatic suggestions
+- Automatic duplicate task deduplication
 
 ---
 

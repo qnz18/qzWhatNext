@@ -255,18 +255,18 @@ Reflects real-world work patterns and prevents artificial blocking.
 
 ---
 
-## D-016 — Energy Budgeting Is Enforced
+## D-016 — Energy Budgeting Is Enforced (Future)
 
 **Decision:**  
-Each day has a finite energy budget that constrains scheduling.
+Each day has a finite energy budget that constrains scheduling. Deferred to future releases.
 
 **Rationale:**  
-Time availability alone is insufficient for realistic planning.
+Time availability alone is insufficient for realistic planning, but energy budgeting adds complexity that can be deferred for MVP.
 
 **Implications:**  
 High-energy clustering is avoided; overflow is deferred.
 
-**Status:** Locked
+**Status:** Locked (Future)
 
 ---
 
@@ -285,10 +285,10 @@ Prevents silent failure and burnout.
 
 ---
 
-## D-018 — Smart Snooze Behavior
+## D-018 — Smart Snooze Behavior (Future)
 
 **Decision:**  
-Snoozing suggests exactly **one** next-best time.
+Snoozing suggests exactly **one** next-best time. Deferred to future releases.
 
 **Triggers:**  
 - Missed task  
@@ -296,9 +296,13 @@ Snoozing suggests exactly **one** next-best time.
 - Detected overload  
 
 **Rationale:**  
-Reduces decision fatigue.
+Reduces decision fatigue, but adds complexity that can be deferred for MVP.
 
-**Status:** Locked
+**Implications:**  
+- MVP: Users can manually reschedule tasks
+- Future: Automatic snooze suggestions with one recommended time
+
+**Status:** Locked (Future)
 
 ---
 
@@ -519,19 +523,18 @@ Enables system to update or delete calendar events on rebuild, preventing duplic
 
 ---
 
-## D-032 — Duplicate Task Handling
+## D-032 — Duplicate Task Handling (MVP: Simplified)
 
 **Decision:**  
-Duplicate tasks are handled automatically if the duplicate is obvious (matching source_type, source_id, and title), with logging. Non-obvious duplicates prompt user notification with suggested actions (merge, replace, keep both).
+MVP notifies user of potential duplicate tasks but does not auto-deduplicate. Future releases may include automatic deduplication.
 
 **Rationale:**  
-Automatically handling obvious duplicates (same task imported twice) reduces friction while preserving user control for ambiguous cases.
+Simplifies MVP scope while still alerting users to potential issues. Automatic deduplication logic can be added based on user feedback.
 
 **Implications:**  
-- Automatic deduplication based on (source_type, source_id) pair match
-- All deduplication actions are logged in audit trail
-- User notification for non-obvious duplicates with suggested resolution options
-- Deduplication preserves the most recent or most complete task data
+- MVP: User notification when potential duplicates are detected (matching source_type, source_id, title)
+- User manually decides how to handle duplicates
+- Future: Automatic deduplication with merge/replace options
 
 **Status:** Locked
 
