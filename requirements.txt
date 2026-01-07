@@ -8,8 +8,8 @@ pydantic==2.5.0
 # HTTP client for API calls
 requests==2.32.3
 
-# Todoist API
-todoist-api-python==2.1.7
+# Database
+sqlalchemy==2.0.23
 
 # Google APIs
 google-api-python-client==2.108.0

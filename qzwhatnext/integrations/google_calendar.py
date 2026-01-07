@@ -63,11 +63,12 @@ class GoogleCalendarClient:
                     )
                 
                 # InstalledAppFlow works with both Desktop and Web app credentials
-                # For Web app credentials, ensure http://localhost is in authorized redirect URIs
+                # Use fixed port 8080 for OAuth redirect URI matching
+                # Make sure http://localhost:8080/ is in authorized redirect URIs in Google Cloud Console
                 flow = InstalledAppFlow.from_client_secrets_file(
                     self.credentials_path, SCOPES
                 )
-                creds = flow.run_local_server(port=0)
+                creds = flow.run_local_server(port=8080)
             
             # Save credentials for next run
             with open(self.token_path, 'w') as token:

@@ -6,13 +6,15 @@ Continuously tells you what you should be doing **right now** and **immediately 
 
 qzWhatNext currently provides:
 
-1. **Task management** (in-memory storage)
-2. **Automatic stack-ranking** of tasks based on priority tiers
-3. **Auto-scheduling** into calendar time slots
-4. **Google Calendar sync** (output only)
-5. **Overflow detection** and notification
+1. **Task management** with SQLite database persistence
+2. **REST API** for task CRUD operations
+3. **Google Sheets import** for bulk task ingestion
+4. **Automatic stack-ranking** of tasks based on priority tiers
+5. **Auto-scheduling** into calendar time slots
+6. **Google Calendar sync** (output only)
+7. **Overflow detection** and notification
 
-**Note:** This is a work-in-progress MVP. Planned features (Google Sheets import, REST API for task CRUD, SQLite database) are documented in the canonical documents but not yet implemented.
+**Note:** This is a work-in-progress MVP. See "Current Limitations" section for deferred features.
 
 ## Product principles (non-negotiable)
 
@@ -77,10 +79,10 @@ AI may **not**:
 **Not yet implemented:**
 - Transition Time modeling (deferred to future releases)
 - Energy budgeting (deferred to future releases)
-- Google Sheets import
-- REST API for task CRUD operations
-- SQLite database persistence (currently using in-memory storage)
 - Smart snooze (manual rescheduling only)
+- Task execution in third-party apps
+- Timeline / ribbon UI visualization
+- Task sharing or collaboration
 
 See canonical documents for planned features and future capabilities.
 
@@ -114,29 +116,32 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-3. Set up environment variables (optional, for Google Calendar):
+3. Set up environment variables (optional, for Google Calendar/Sheets):
    - Create `.env` file in project root
-   - Add Google Calendar credentials path and calendar ID:
+   - Add Google API credentials path and calendar ID:
      ```
      GOOGLE_CALENDAR_CREDENTIALS_PATH=credentials.json
      GOOGLE_CALENDAR_ID=primary
+     GOOGLE_SHEETS_CREDENTIALS_PATH=credentials.json
      ```
+   - Note: The same `credentials.json` file can be used for both Calendar and Sheets APIs
 
-4. For Google Calendar integration:
-   - Enable Google Calendar API in Google Cloud Console
+4. For Google Calendar/Sheets integration:
+   - Enable Google Calendar API and Google Sheets API in Google Cloud Console
    - Create OAuth2 credentials (Web app type)
-   - Add `http://localhost` to authorized redirect URIs
+   - **IMPORTANT**: Add `http://localhost:8080/` to authorized redirect URIs (exact URI with trailing slash)
    - Download OAuth2 credentials as `credentials.json` to project root
 
 5. Run the application:
 ```bash
-uvicorn qzwhatnext.api.app:app --reload
+python run.py
+# Or: uvicorn qzwhatnext.api.app:app --reload
 ```
 
 The API will be available at `http://localhost:8000`
 API documentation at `http://localhost:8000/docs`
 
-**Note:** Tasks are currently stored in-memory and will be lost on server restart. Database persistence is planned but not yet implemented.
+**Note:** Tasks are persisted in SQLite database (`qzwhatnext.db`). The database is automatically created on first run.
 
 ## Suggested repo layout
 

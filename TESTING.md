@@ -23,13 +23,12 @@ The application will be available at `http://localhost:8000`
 
 ### 2. Test via Web UI
 
-**Note:** Task creation UI is not yet implemented. Tasks must be added programmatically via API.
-
 1. Open `http://localhost:8000` in your browser
-2. Add tasks via API (see API docs at `/docs`)
-3. Click "Build Schedule" to create a schedule
-4. Click "View Schedule" to see the scheduled blocks
-5. Click "Sync to Google Calendar" to write events (requires OAuth2 setup)
+2. Use the API docs at `/docs` to test endpoints
+3. Create tasks via `POST /tasks`
+4. Build schedule via `POST /schedule`
+5. View schedule via `GET /schedule`
+6. Sync to Google Calendar via `POST /sync-calendar` (requires OAuth2 setup)
 
 ### 3. Test via API
 
@@ -38,8 +37,41 @@ The application will be available at `http://localhost:8000`
 curl http://localhost:8000/health
 ```
 
-#### Create Task (via API)
-**Note:** Task CRUD endpoints are not yet implemented. Tasks must be added programmatically.
+#### Create Task
+```bash
+curl -X POST http://localhost:8000/tasks \
+  -H "Content-Type: application/json" \
+  -d '{"title": "Test Task", "category": "other"}'
+```
+
+#### List Tasks
+```bash
+curl http://localhost:8000/tasks
+```
+
+#### Get Specific Task
+```bash
+curl http://localhost:8000/tasks/{task_id}
+```
+
+#### Update Task
+```bash
+curl -X PUT http://localhost:8000/tasks/{task_id} \
+  -H "Content-Type: application/json" \
+  -d '{"title": "Updated Task Title"}'
+```
+
+#### Delete Task
+```bash
+curl -X DELETE http://localhost:8000/tasks/{task_id}
+```
+
+#### Import from Google Sheets
+```bash
+curl -X POST http://localhost:8000/import/sheets \
+  -H "Content-Type: application/json" \
+  -d '{"spreadsheet_id": "YOUR_SHEET_ID", "range_name": "Sheet1!A2:Z1000"}'
+```
 
 #### Build Schedule
 ```bash
@@ -70,32 +102,71 @@ To verify deterministic behavior:
 
 ```python
 # Example test script
+from qzwhatnext.database.database import init_db, SessionLocal
+from qzwhatnext.database.repository import TaskRepository
 from qzwhatnext.engine.ranking import stack_rank
 from qzwhatnext.engine.scheduler import schedule_tasks
 from qzwhatnext.models.task import Task, TaskStatus, TaskCategory
 from datetime import datetime
+import uuid
 
-# Create test tasks (programmatically - no import yet)
-tasks1 = [Task(...), Task(...)]  # Create tasks with same data
-tasks2 = [Task(...), Task(...)]  # Create tasks with same data
+# Initialize database
+init_db()
+
+# Create test tasks via repository
+db = SessionLocal()
+repo = TaskRepository(db)
+
+task1 = Task(
+    id=str(uuid.uuid4()),
+    source_type='api',
+    source_id=None,
+    title='Test Task 1',
+    status=TaskStatus.OPEN,
+    created_at=datetime.utcnow(),
+    updated_at=datetime.utcnow(),
+    category=TaskCategory.OTHER
+)
+task2 = Task(
+    id=str(uuid.uuid4()),
+    source_type='api',
+    source_id=None,
+    title='Test Task 2',
+    status=TaskStatus.OPEN,
+    created_at=datetime.utcnow(),
+    updated_at=datetime.utcnow(),
+    category=TaskCategory.OTHER
+)
+
+created1 = repo.create(task1)
+created2 = repo.create(task2)
+
+# Get tasks from database
+tasks = repo.get_all()
 
 # Build schedules
-ranked1 = stack_rank(tasks1)
-ranked2 = stack_rank(tasks2)
+ranked = stack_rank(tasks)
+schedule = schedule_tasks(ranked)
 
-schedule1 = schedule_tasks(ranked1)
-schedule2 = schedule_tasks(ranked2)
+# Verify schedule was created
+assert len(schedule.scheduled_blocks) > 0
 
-# Compare (should be identical)
-assert len(schedule1.scheduled_blocks) == len(schedule2.scheduled_blocks)
+# Cleanup
+repo.delete(created1.id)
+repo.delete(created2.id)
+db.close()
 ```
 
 ## Testing AI Exclusion
 
-1. Create a task in Todoist with title starting with `.` (e.g., `.Private task`)
-2. Import tasks
-3. Verify the task has `ai_excluded=True`
-4. Verify the task is still scheduled (AI exclusion doesn't prevent scheduling)
+1. Create a task via API with title starting with `.` (e.g., `.Private task`):
+   ```bash
+   curl -X POST http://localhost:8000/tasks \
+     -H "Content-Type: application/json" \
+     -d '{"title": ".Private task", "category": "other"}'
+   ```
+2. Verify the task has `ai_excluded=True` (check response or get task)
+3. Verify the task is still scheduled (AI exclusion doesn't prevent scheduling)
 
 ## Testing Tier Assignment
 
@@ -109,26 +180,35 @@ Test that tasks are assigned to correct tiers:
 
 ## Testing Overflow Detection
 
-1. Add many tasks programmatically (more than can fit in available time)
-2. Build schedule
+1. Add many tasks via API (more than can fit in available time):
+   ```bash
+   for i in {1..50}; do
+     curl -X POST http://localhost:8000/tasks \
+       -H "Content-Type: application/json" \
+       -d "{\"title\": \"Task $i\", \"category\": \"other\", \"estimated_duration_min\": 60}"
+   done
+   ```
+2. Build schedule: `curl -X POST http://localhost:8000/schedule`
 3. Verify overflow tasks are identified in the response
 
 ## Common Issues
 
 ### Task Storage
-- Tasks are stored in-memory and will be lost on server restart
-- Database persistence is planned but not yet implemented
-- Check API token is valid and not expired
-- Verify network connectivity
+- Tasks are stored in SQLite database (`qzwhatnext.db`)
+- Database is automatically created on first run
+- Tasks persist across server restarts
+- If database errors occur, check file permissions in project directory
 
-### Google Calendar OAuth2 Errors
+### Google Calendar/Sheets OAuth2 Errors
 - Ensure `credentials.json` exists and is valid
 - First run will open browser for authorization
-- Token will be saved to `token.json`
-- Ensure Calendar API is enabled in Google Cloud Console
+- Tokens will be saved to `token.json` (Calendar) and `sheets_token.json` (Sheets)
+- Ensure Calendar API and Sheets API are enabled in Google Cloud Console
+- Verify OAuth2 consent screen is configured
 
 ### Import/Schedule Errors
-- Check that tasks were imported successfully
+- For Google Sheets import: Verify spreadsheet ID is correct and sheet is accessible
+- Check that tasks were imported successfully (verify via `GET /tasks`)
 - Verify task data is valid (no missing required fields)
 - Review application logs for errors
 
