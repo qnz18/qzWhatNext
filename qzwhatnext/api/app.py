@@ -108,6 +108,11 @@ class TaskUpdateRequest(BaseModel):
             return TaskCategory.UNKNOWN
 
 
+class TaskAddSmartRequest(BaseModel):
+    """Request model for iOS Shortcut task creation (notes only, auto-generates timestamp title)."""
+    notes: str
+
+
 class TaskResponse(BaseModel):
     """Response model for task."""
     task: Task
@@ -475,6 +480,50 @@ async def create_task(request: TaskCreateRequest, db: Session = Depends(get_db))
         dependencies=[],
         flexibility_window=None,
         ai_excluded=request.title.startswith('.') if request.title else False,
+        manual_priority_locked=False,
+        user_locked=False,
+        manually_scheduled=False,
+    )
+    
+    try:
+        created_task = repo.create(task)
+        return TaskResponse(task=created_task)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create task: {str(e)}")
+
+
+@app.post("/tasks/add_smart", response_model=TaskResponse, status_code=201)
+async def add_smart_task(request: TaskAddSmartRequest, db: Session = Depends(get_db)):
+    """Create a new task from iOS Shortcut with auto-generated timestamp title.
+    
+    This endpoint is designed for iOS Shortcuts integration. It accepts only
+    a notes field and automatically generates the task title from the creation timestamp.
+    """
+    repo = TaskRepository(db)
+    
+    # Create task with timestamp as title
+    now = datetime.utcnow()
+    timestamp_title = now.isoformat()
+    
+    task = Task(
+        id=str(uuid.uuid4()),
+        source_type="api",
+        source_id=None,
+        title=timestamp_title,
+        notes=request.notes,
+        status=TaskStatus.OPEN,
+        created_at=now,
+        updated_at=now,
+        deadline=None,
+        estimated_duration_min=30,
+        duration_confidence=0.5,
+        category=TaskCategory.UNKNOWN,
+        energy_intensity=EnergyIntensity.MEDIUM,
+        risk_score=0.3,
+        impact_score=0.3,
+        dependencies=[],
+        flexibility_window=None,
+        ai_excluded=timestamp_title.startswith('.') if timestamp_title else False,
         manual_priority_locked=False,
         user_locked=False,
         manually_scheduled=False,
