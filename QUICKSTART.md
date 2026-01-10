@@ -13,7 +13,7 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-## 2. Configure (Optional - for Google Calendar/Sheets)
+## 2. Configure (Optional - for Google Calendar/Sheets and OpenAI)
 
 Create a `.env` file in the project root:
 
@@ -21,9 +21,12 @@ Create a `.env` file in the project root:
 GOOGLE_CALENDAR_CREDENTIALS_PATH=credentials.json
 GOOGLE_CALENDAR_ID=primary
 GOOGLE_SHEETS_CREDENTIALS_PATH=credentials.json
+OPENAI_API_KEY=sk-your-api-key-here
 ```
 
-**Note:** Google Calendar/Sheets setup is optional. You can use the scheduling features and REST API without Google integration. The database (SQLite) will be created automatically.
+**Note:** 
+- Google Calendar/Sheets setup is optional. You can use the scheduling features and REST API without Google integration.
+- OpenAI API key is optional. If not set, category inference will not be available and tasks created via `/tasks/add_smart` will use `UNKNOWN` category. The database (SQLite) will be created automatically.
 
 ## 3. Google Calendar/Sheets Setup (Optional)
 
@@ -52,6 +55,7 @@ Visit `http://localhost:8000` in your browser.
 **Current Implementation:**
 - **Create tasks** via REST API (see API docs at `/docs`)
   - `POST /tasks` - Create a new task
+  - `POST /tasks/add_smart` - Create a task with auto-generated title and AI category inference (requires `OPENAI_API_KEY` for inference)
   - `GET /tasks` - List all tasks
   - `GET /tasks/{task_id}` - Get a specific task
   - `PUT /tasks/{task_id}` - Update a task

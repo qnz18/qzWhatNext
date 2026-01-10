@@ -12,7 +12,8 @@ def is_ai_excluded(task: Task) -> bool:
     
     A task is AI-excluded if:
     1. Its title begins with a period (`.`)
-    2. OR it is explicitly flagged as ai_excluded
+    2. OR its notes field begins with a period (`.`)
+    3. OR it is explicitly flagged as ai_excluded
     
     Args:
         task: The task to check
@@ -28,8 +29,12 @@ def is_ai_excluded(task: Task) -> bool:
         - Never change tiers due to AI inference
         - May still be scheduled deterministically
     """
-    # Check for period prefix
-    if task.title.startswith('.'):
+    # Check for period prefix in title
+    if task.title and task.title.startswith('.'):
+        return True
+    
+    # Check for period prefix in notes (for add_smart where title is auto-generated)
+    if task.notes and task.notes.startswith('.'):
         return True
     
     # Check explicit exclusion flag

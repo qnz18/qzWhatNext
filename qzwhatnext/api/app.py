@@ -1,5 +1,6 @@
 """FastAPI web application for qzWhatNext."""
 
+import logging
 import uuid
 from datetime import datetime
 from typing import List, Optional, Dict
@@ -15,6 +16,7 @@ from qzwhatnext.integrations.google_calendar import GoogleCalendarClient
 from qzwhatnext.integrations.google_sheets import GoogleSheetsClient
 from qzwhatnext.engine.ranking import stack_rank
 from qzwhatnext.engine.scheduler import schedule_tasks, SchedulingResult
+from qzwhatnext.engine.inference import infer_category
 from qzwhatnext.database.database import get_db, init_db
 from qzwhatnext.database.repository import TaskRepository
 
@@ -496,14 +498,22 @@ async def create_task(request: TaskCreateRequest, db: Session = Depends(get_db))
         raise HTTPException(status_code=500, detail=f"Failed to create task: {str(e)}")
 
 
+logger = logging.getLogger(__name__)
+
+
 @app.post("/tasks/add_smart", response_model=TaskResponse, status_code=201)
 async def add_smart_task(request: TaskAddSmartRequest, db: Session = Depends(get_db)):
     """Create a new task from iOS Shortcut with auto-generated timestamp title.
     
     This endpoint is designed for iOS Shortcuts integration. It accepts only
     a notes field and automatically generates the task title from the creation timestamp.
+    Category is automatically inferred from notes using OpenAI API if not AI-excluded.
     """
+    
     repo = TaskRepository(db)
+    
+    # Check if notes starts with "." for AI exclusion (since title is auto-generated)
+    ai_excluded = request.notes.startswith('.') if request.notes else False
     
     # Create task with timestamp as title
     now = datetime.utcnow()
@@ -527,11 +537,27 @@ async def add_smart_task(request: TaskAddSmartRequest, db: Session = Depends(get
         impact_score=0.3,
         dependencies=[],
         flexibility_window=None,
-        ai_excluded=timestamp_title.startswith('.') if timestamp_title else False,
+        ai_excluded=ai_excluded,
         manual_priority_locked=False,
         user_locked=False,
         manually_scheduled=False,
     )
+    
+    # Infer category if not AI-excluded
+    if not ai_excluded:
+        try:
+            inferred_category, confidence = infer_category(task)
+            # Update category if confidence meets threshold
+            # (infer_category already applies threshold, so if it returns non-UNKNOWN, use it)
+            if inferred_category != TaskCategory.UNKNOWN:
+                task.category = inferred_category
+                logger.debug(f"Task {task.id} category inferred as {inferred_category.value} with confidence {confidence}")
+            else:
+                logger.debug(f"Task {task.id} category inference returned UNKNOWN (confidence: {confidence})")
+        except Exception as e:
+            # Log error but don't fail task creation
+            logger.error(f"Error inferring category for task {task.id}: {type(e).__name__}")
+            # Continue with UNKNOWN category
     
     try:
         created_task = repo.create(task)

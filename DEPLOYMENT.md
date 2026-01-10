@@ -87,6 +87,7 @@ Set these in your deployment:
 - `GOOGLE_CALENDAR_CREDENTIALS_PATH`: Path to OAuth2 credentials for Calendar API (optional, use Secret Manager for production)
 - `GOOGLE_SHEETS_CREDENTIALS_PATH`: Path to OAuth2 credentials for Sheets API (optional, use Secret Manager for production)
 - `GOOGLE_CALENDAR_ID`: Calendar ID (defaults to "primary")
+- `OPENAI_API_KEY`: OpenAI API key for AI category inference (optional, use Secret Manager for production)
 - `DATABASE_URL`: Database connection string (defaults to `sqlite:///./qzwhatnext.db`)
 - `DEBUG`: Set to "False" in production
 
@@ -101,10 +102,11 @@ Set these in your deployment:
 
 ## Security Notes
 
-- Never commit `credentials.json` or `token.json` to version control
-- Use Google Secret Manager for production credentials
+- Never commit `credentials.json`, `token.json`, or API keys to version control
+- Use Google Secret Manager for production credentials (Calendar, Sheets, OpenAI)
 - Restrict API access to necessary scopes only
 - Use least-privilege IAM roles
+- Never log API keys or sensitive data
 
 ## Troubleshooting
 

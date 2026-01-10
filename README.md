@@ -116,7 +116,7 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-3. Set up environment variables (optional, for Google Calendar/Sheets):
+3. Set up environment variables (optional, for Google Calendar/Sheets and OpenAI):
    - Create `.env` file in project root
    - Add Google API credentials path and calendar ID:
      ```
@@ -124,7 +124,12 @@ pip install -r requirements.txt
      GOOGLE_CALENDAR_ID=primary
      GOOGLE_SHEETS_CREDENTIALS_PATH=credentials.json
      ```
+   - For AI category inference (optional):
+     ```
+     OPENAI_API_KEY=sk-your-api-key-here
+     ```
    - Note: The same `credentials.json` file can be used for both Calendar and Sheets APIs
+   - Note: If `OPENAI_API_KEY` is not set, category inference will not be available and tasks will use `UNKNOWN` category
 
 4. For Google Calendar/Sheets integration:
    - Enable Google Calendar API and Google Sheets API in Google Cloud Console
