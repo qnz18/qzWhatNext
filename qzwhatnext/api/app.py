@@ -16,7 +16,7 @@ from qzwhatnext.integrations.google_calendar import GoogleCalendarClient
 from qzwhatnext.integrations.google_sheets import GoogleSheetsClient
 from qzwhatnext.engine.ranking import stack_rank
 from qzwhatnext.engine.scheduler import schedule_tasks, SchedulingResult
-from qzwhatnext.engine.inference import infer_category
+from qzwhatnext.engine.inference import infer_category, generate_title
 from qzwhatnext.database.database import get_db, init_db
 from qzwhatnext.database.repository import TaskRepository
 
@@ -503,27 +503,82 @@ logger = logging.getLogger(__name__)
 
 @app.post("/tasks/add_smart", response_model=TaskResponse, status_code=201)
 async def add_smart_task(request: TaskAddSmartRequest, db: Session = Depends(get_db)):
-    """Create a new task from iOS Shortcut with auto-generated timestamp title.
+    """Create a new task from iOS Shortcut with auto-generated title and category.
     
     This endpoint is designed for iOS Shortcuts integration. It accepts only
-    a notes field and automatically generates the task title from the creation timestamp.
-    Category is automatically inferred from notes using OpenAI API if not AI-excluded.
+    a notes field and automatically generates:
+    - Task title from notes using OpenAI API (or truncates notes as fallback)
+    - Category from notes using OpenAI API (if not AI-excluded)
+    
+    If notes start with ".", the task is AI-excluded and uses fallback title generation.
     """
     
     repo = TaskRepository(db)
     
-    # Check if notes starts with "." for AI exclusion (since title is auto-generated)
+    # Check if notes starts with "." for AI exclusion
     ai_excluded = request.notes.startswith('.') if request.notes else False
     
-    # Create task with timestamp as title
+    # Create task with placeholder title (will be updated)
     now = datetime.utcnow()
-    timestamp_title = now.isoformat()
     
+    # Determine title: try AI generation if not excluded, otherwise use fallback
+    task_title = ""
+    notes = request.notes or ""
+    
+    # Generate title if not AI-excluded
+    if not ai_excluded and notes.strip():
+        # Create temporary task object for inference (minimal fields needed)
+        temp_task = Task(
+            id=str(uuid.uuid4()),  # Temporary ID for inference
+            source_type="api",
+            source_id=None,
+            title="",  # Empty title won't trigger AI exclusion check
+            notes=notes,
+            status=TaskStatus.OPEN,
+            created_at=now,
+            updated_at=now,
+            deadline=None,
+            estimated_duration_min=30,
+            duration_confidence=0.5,
+            category=TaskCategory.UNKNOWN,
+            energy_intensity=EnergyIntensity.MEDIUM,
+            risk_score=0.3,
+            impact_score=0.3,
+            dependencies=[],
+            flexibility_window=None,
+            ai_excluded=False,  # We already checked this above
+            manual_priority_locked=False,
+            user_locked=False,
+            manually_scheduled=False,
+        )
+        
+        try:
+            generated_title = generate_title(temp_task, max_length=100)
+            if generated_title and generated_title.strip():
+                task_title = generated_title.strip()
+                logger.debug(f"Generated title for task: {task_title[:50]}...")
+        except Exception as e:
+            # Log error but don't fail task creation
+            logger.error(f"Error generating title: {type(e).__name__}")
+            # Fall through to fallback
+    
+    # Fallback: use first 100 characters of notes, or default if empty
+    if not task_title:
+        if notes.strip():
+            task_title = notes[:100].strip()
+            if len(notes) > 100:
+                # Truncate at word boundary if possible
+                truncated = task_title.rsplit(' ', 1)[0] if ' ' in task_title else task_title
+                task_title = truncated if len(truncated) > 50 else task_title  # Keep at least 50 chars if possible
+        else:
+            task_title = "Untitled Task"
+    
+    # Create task with generated/fallback title
     task = Task(
         id=str(uuid.uuid4()),
         source_type="api",
         source_id=None,
-        title=timestamp_title,
+        title=task_title,
         notes=request.notes,
         status=TaskStatus.OPEN,
         created_at=now,

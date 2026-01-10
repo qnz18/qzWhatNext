@@ -1,7 +1,7 @@
 """OpenAI API integration for qzWhatNext.
 
 This module provides OpenAI API integration for AI-assisted task attribute inference,
-specifically for category inference from task notes.
+specifically for category inference and title generation from task notes.
 """
 
 import os
@@ -46,6 +46,19 @@ Example response:
 {{"category": "WORK", "confidence": 0.9}}
 
 Respond only with the JSON object, no other text."""
+
+# Title generation prompt template
+TITLE_PROMPT_TEMPLATE = """You are a task title generation assistant. Given a task note, create a concise, actionable title.
+
+Task note: "{notes}"
+
+Generate a clear, descriptive title that summarizes the task. The title should be:
+- Concise (maximum {max_length} characters)
+- Actionable and clear
+- Not just a copy of the notes, but a summary
+- Suitable for display in a task list
+
+Respond with only the title text, nothing else."""
 
 
 class OpenAIClient:
@@ -164,4 +177,85 @@ class OpenAIClient:
             logger.error(f"Error calling OpenAI API: {type(e).__name__}")
             # Don't log full error message as it might contain sensitive info
             return (TaskCategory.UNKNOWN, 0.0)
+    
+    def generate_title(self, notes: str, max_length: int = 100) -> str:
+        """Generate a concise title from task notes using OpenAI API.
+        
+        Args:
+            notes: Task notes/description to generate title from
+            max_length: Maximum length of the generated title (default: 100)
+            
+        Returns:
+            Generated title string, or empty string if:
+            - API key is not configured
+            - API call fails
+            - Notes are empty
+            - Response is invalid
+        """
+        # Check if client is available
+        if not self.client:
+            logger.debug("OpenAI client not initialized. Returning empty title.")
+            return ""
+        
+        # Handle empty notes
+        if not notes or not notes.strip():
+            logger.debug("Empty notes provided. Returning empty title.")
+            return ""
+        
+        try:
+            # Prepare prompt
+            prompt = TITLE_PROMPT_TEMPLATE.format(notes=notes, max_length=max_length)
+            
+            # Call OpenAI API
+            response = self.client.chat.completions.create(
+                model=OPENAI_MODEL,
+                messages=[
+                    {"role": "system", "content": "You are a task title generation assistant. Respond with only the title text."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.5,  # Slightly higher for more creative titles
+                max_tokens=50,    # Titles should be short
+            )
+            
+            # Extract response content
+            title = response.choices[0].message.content.strip()
+            
+            # Clean up title (remove quotes if present, trim whitespace)
+            if title.startswith('"') and title.endswith('"'):
+                title = title[1:-1]
+            if title.startswith("'") and title.endswith("'"):
+                title = title[1:-1]
+            title = title.strip()
+            
+            # Enforce max length (truncate if needed)
+            if len(title) > max_length:
+                title = title[:max_length].rstrip()
+                logger.debug(f"Title truncated to {max_length} characters")
+            
+            if not title:
+                logger.warning("OpenAI returned empty title")
+                return ""
+            
+            logger.debug(f"OpenAI generated title: {title[:50]}...")
+            return title
+            
+        except APIError as e:
+            # Handle OpenAI API errors (rate limits, quota issues, invalid key, etc.)
+            error_code = getattr(e, 'code', None)
+            status_code = getattr(e, 'status_code', None)
+            
+            if error_code == 'insufficient_quota':
+                logger.warning("OpenAI API quota insufficient for title generation. Please check billing/payment method in OpenAI dashboard.")
+            elif status_code == 429:
+                logger.warning("OpenAI API rate limit exceeded for title generation. Please wait before retrying.")
+            else:
+                logger.error(f"OpenAI API error during title generation: {status_code or 'unknown'} ({error_code or 'unknown'})")
+            
+            # Don't log full error message as it might contain sensitive info
+            return ""
+        except Exception as e:
+            # Handle any other errors (network, parsing, etc.)
+            logger.error(f"Error generating title with OpenAI API: {type(e).__name__}")
+            # Don't log full error message as it might contain sensitive info
+            return ""
 

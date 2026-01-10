@@ -1,7 +1,7 @@
 """AI inference logic for task attributes.
 
 This module handles AI-assisted inference of task attributes including
-category, duration, energy intensity, risk score, and impact score.
+category, duration, energy intensity, risk score, impact score, and title generation.
 
 1. Check AI exclusion BEFORE any inference calls
 2. Use 'unknown' category when confidence is low (< threshold, e.g., 0.6)
@@ -76,6 +76,55 @@ def infer_category(task: Task) -> Tuple[TaskCategory, float]:
         # Handle any errors gracefully - don't fail task creation
         logger.error(f"Error inferring category for task {task.id}: {type(e).__name__}")
         return (TaskCategory.UNKNOWN, 0.0)
+
+
+def generate_title(task: Task, max_length: int = 100) -> Optional[str]:
+    """Generate a concise title from task notes using OpenAI API.
+    
+    This function:
+    - Checks AI exclusion BEFORE calling OpenAI (trust-critical)
+    - Returns None if task is AI-excluded or generation fails
+    - Returns generated title string if successful
+    
+    Args:
+        task: Task to generate title for
+        max_length: Maximum length of the generated title (default: 100)
+        
+    Returns:
+        Generated title string, or None if:
+        - Task is AI-excluded
+        - Notes are empty
+        - Generation fails
+    """
+    # Check AI exclusion BEFORE any inference calls (trust-critical)
+    if is_ai_excluded(task):
+        logger.debug(f"Task {task.id} is AI-excluded. Skipping title generation.")
+        return None
+    
+    # Extract notes for inference
+    notes = task.notes or ""
+    
+    # If no notes, return None
+    if not notes.strip():
+        logger.debug(f"Task {task.id} has no notes. Skipping title generation.")
+        return None
+    
+    # Call OpenAI client to generate title
+    try:
+        openai_client = _get_openai_client()
+        title = openai_client.generate_title(notes, max_length=max_length)
+        
+        if title and title.strip():
+            logger.debug(f"Task {task.id} generated title: {title[:50]}...")
+            return title.strip()
+        else:
+            logger.debug(f"Task {task.id} title generation returned empty string")
+            return None
+        
+    except Exception as e:
+        # Handle any errors gracefully - don't fail task creation
+        logger.error(f"Error generating title for task {task.id}: {type(e).__name__}")
+        return None
 
 
 def infer_task_attributes(task: Task) -> Optional[Task]:
