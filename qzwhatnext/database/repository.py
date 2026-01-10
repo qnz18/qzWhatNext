@@ -1,11 +1,14 @@
 """Repository layer for database operations."""
 
+import logging
 from typing import List, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, desc
 
 from qzwhatnext.models.task import Task
-from qzwhatnext.database.models import TaskDB
+from qzwhatnext.database.models import TaskDB, enum_to_value
+
+logger = logging.getLogger(__name__)
 
 
 class TaskRepository:
@@ -16,11 +19,17 @@ class TaskRepository:
     
     def create(self, task: Task) -> Task:
         """Create a new task."""
-        task_db = TaskDB.from_pydantic(task)
-        self.db.add(task_db)
-        self.db.commit()
-        self.db.refresh(task_db)
-        return task_db.to_pydantic()
+        try:
+            task_db = TaskDB.from_pydantic(task)
+            self.db.add(task_db)
+            self.db.commit()
+            self.db.refresh(task_db)
+            logger.debug(f"Created task {task.id}: {task.title[:50]}")
+            return task_db.to_pydantic()
+        except Exception as e:
+            self.db.rollback()
+            logger.error(f"Failed to create task {task.id}: {type(e).__name__}: {str(e)}")
+            raise
     
     def get(self, task_id: str) -> Optional[Task]:
         """Get task by ID."""
@@ -44,9 +53,9 @@ class TaskRepository:
             raise ValueError(f"Task {task.id} not found")
         
         # Handle enum values (Pydantic with use_enum_values=True returns strings)
-        status_value = task.status.value if hasattr(task.status, 'value') else task.status
-        category_value = task.category.value if hasattr(task.category, 'value') else task.category
-        energy_value = task.energy_intensity.value if hasattr(task.energy_intensity, 'value') else task.energy_intensity
+        status_value = enum_to_value(task.status)
+        category_value = enum_to_value(task.category)
+        energy_value = enum_to_value(task.energy_intensity)
         
         # Update all fields
         task_db.source_type = task.source_type
@@ -69,9 +78,15 @@ class TaskRepository:
         task_db.user_locked = task.user_locked
         task_db.manually_scheduled = task.manually_scheduled
         
-        self.db.commit()
-        self.db.refresh(task_db)
-        return task_db.to_pydantic()
+        try:
+            self.db.commit()
+            self.db.refresh(task_db)
+            logger.debug(f"Updated task {task.id}: {task.title[:50]}")
+            return task_db.to_pydantic()
+        except Exception as e:
+            self.db.rollback()
+            logger.error(f"Failed to update task {task.id}: {type(e).__name__}: {str(e)}")
+            raise
     
     def delete(self, task_id: str) -> bool:
         """Delete a task by ID."""
@@ -79,9 +94,15 @@ class TaskRepository:
         if not task_db:
             return False
         
-        self.db.delete(task_db)
-        self.db.commit()
-        return True
+        try:
+            self.db.delete(task_db)
+            self.db.commit()
+            logger.debug(f"Deleted task {task_id}")
+            return True
+        except Exception as e:
+            self.db.rollback()
+            logger.error(f"Failed to delete task {task_id}: {type(e).__name__}: {str(e)}")
+            raise
     
     def find_duplicates(self, source_type: str, source_id: Optional[str], title: str) -> List[Task]:
         """Find potential duplicate tasks (matching source_type, source_id, title)."""

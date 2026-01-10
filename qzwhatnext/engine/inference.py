@@ -14,19 +14,24 @@ from typing import Optional, Tuple
 from qzwhatnext.models.task import Task, TaskCategory
 from qzwhatnext.engine.ai_exclusion import is_ai_excluded
 from qzwhatnext.integrations.openai_client import OpenAIClient
+from qzwhatnext.models.constants import (
+    CATEGORY_CONFIDENCE_THRESHOLD,
+    DURATION_CONFIDENCE_THRESHOLD,
+    MIN_DURATION_MIN,
+    MAX_DURATION_MIN,
+    DURATION_ROUNDING,
+)
 
 logger = logging.getLogger(__name__)
 
-# Confidence threshold for using 'unknown' category
-CATEGORY_CONFIDENCE_THRESHOLD = 0.6
-
-# Confidence threshold for using duration estimate
-DURATION_CONFIDENCE_THRESHOLD = 0.6
-
-# Duration constraints
-MIN_DURATION_MIN = 5  # 5 minutes minimum
-MAX_DURATION_MIN = 600  # 600 minutes (10 hours) maximum
-DURATION_ROUNDING = 15  # Round to nearest 15 minutes
+# Re-export constants for backward compatibility
+__all__ = [
+    'CATEGORY_CONFIDENCE_THRESHOLD',
+    'DURATION_CONFIDENCE_THRESHOLD',
+    'MIN_DURATION_MIN',
+    'MAX_DURATION_MIN',
+    'DURATION_ROUNDING',
+]
 
 # Initialize OpenAI client (singleton pattern)
 _openai_client: Optional[OpenAIClient] = None

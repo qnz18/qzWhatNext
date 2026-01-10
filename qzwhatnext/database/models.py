@@ -5,8 +5,44 @@ from typing import Optional, List
 import uuid
 from sqlalchemy import Column, String, Integer, Float, Boolean, DateTime, JSON
 
+from typing import Union, TypeVar, Type
 from qzwhatnext.database.database import Base
 from qzwhatnext.models.task import TaskStatus, TaskCategory, EnergyIntensity
+
+T = TypeVar('T')
+
+
+def enum_to_value(enum_obj: Union[str, T]) -> str:
+    """Convert enum to string value (handles both enum and string).
+    
+    Args:
+        enum_obj: Enum instance or string value
+        
+    Returns:
+        String value of the enum, or the string itself if already a string
+    """
+    if hasattr(enum_obj, 'value'):
+        return enum_obj.value
+    return str(enum_obj)
+
+
+def value_to_enum(value: str, enum_class: Type[T], default: T) -> T:
+    """Convert string to enum with fallback to default.
+    
+    Args:
+        value: String value to convert
+        enum_class: Enum class to convert to
+        default: Default enum value if conversion fails
+        
+    Returns:
+        Enum instance, or default if conversion fails
+    """
+    if not value:
+        return default
+    try:
+        return enum_class(value.lower())
+    except (ValueError, AttributeError):
+        return default
 
 
 class TaskDB(Base):
@@ -75,11 +111,7 @@ class TaskDB(Base):
         }
         category = category_mapping.get(self.category.lower(), None)
         if category is None:
-            try:
-                category = TaskCategory(self.category)
-            except ValueError:
-                # Fallback to UNKNOWN for unknown category values
-                category = TaskCategory.UNKNOWN
+            category = value_to_enum(self.category, TaskCategory, TaskCategory.UNKNOWN)
         
         return Task(
             id=self.id,
@@ -87,14 +119,14 @@ class TaskDB(Base):
             source_id=self.source_id,
             title=self.title,
             notes=self.notes,
-            status=TaskStatus(self.status),
+            status=value_to_enum(self.status, TaskStatus, TaskStatus.OPEN),
             created_at=self.created_at,
             updated_at=self.updated_at,
             deadline=self.deadline,
             estimated_duration_min=self.estimated_duration_min,
             duration_confidence=self.duration_confidence,
             category=category,
-            energy_intensity=EnergyIntensity(self.energy_intensity),
+            energy_intensity=value_to_enum(self.energy_intensity, EnergyIntensity, EnergyIntensity.MEDIUM),
             risk_score=self.risk_score,
             impact_score=self.impact_score,
             dependencies=self.dependencies or [],
@@ -114,9 +146,9 @@ class TaskDB(Base):
             flex_window = [d.isoformat() for d in task.flexibility_window]
         
         # Handle enum values (Pydantic with use_enum_values=True returns strings)
-        status_value = task.status.value if hasattr(task.status, 'value') else task.status
-        category_value = task.category.value if hasattr(task.category, 'value') else task.category
-        energy_value = task.energy_intensity.value if hasattr(task.energy_intensity, 'value') else task.energy_intensity
+        status_value = enum_to_value(task.status)
+        category_value = enum_to_value(task.category)
+        energy_value = enum_to_value(task.energy_intensity)
         
         return cls(
             id=task.id,

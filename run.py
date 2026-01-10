@@ -3,14 +3,23 @@
 
 import signal
 import sys
+import logging
 import uvicorn
+
+logger = logging.getLogger(__name__)
 
 def signal_handler(sig, frame):
     """Handle Ctrl+C gracefully."""
-    print("\n\nShutting down server...")
+    logger.info("\n\nShutting down server...")
     sys.exit(0)
 
 if __name__ == "__main__":
+    # Configure logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    
     # Register signal handler for graceful shutdown
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
@@ -24,6 +33,6 @@ if __name__ == "__main__":
             log_level="info"
         )
     except KeyboardInterrupt:
-        print("\n\nShutting down server...")
+        logger.info("\n\nShutting down server...")
         sys.exit(0)
 

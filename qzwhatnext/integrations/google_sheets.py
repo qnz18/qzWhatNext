@@ -2,6 +2,7 @@
 
 import os
 import re
+import logging
 from datetime import datetime
 from typing import List, Optional
 from google.oauth2.credentials import Credentials
@@ -13,8 +14,12 @@ from dotenv import load_dotenv
 import uuid
 
 from qzwhatnext.models.task import Task, TaskStatus, TaskCategory, EnergyIntensity
+from qzwhatnext.models.task_factory import create_task_base, determine_ai_exclusion
+from qzwhatnext.models.constants import DEFAULT_DURATION_MINUTES
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 # Google Sheets API scopes
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
@@ -104,7 +109,7 @@ class GoogleSheetsClient:
         # If no valid credentials, get new ones
         if not creds or not creds.valid:
             if creds and creds.expired and creds.refresh_token:
-                print("Refreshing expired Google Sheets credentials...")
+                logger.info("Refreshing expired Google Sheets credentials...")
                 creds.refresh(Request())
             else:
                 if not os.path.exists(self.credentials_path):
@@ -113,13 +118,13 @@ class GoogleSheetsClient:
                         "Please download OAuth2 credentials from Google Cloud Console."
                     )
                 
-                print("\n" + "="*60)
-                print("Google Sheets OAuth Authentication Required")
-                print("="*60)
-                print("A browser window will open for authentication.")
-                print("If no browser opens, visit the URL shown below.")
-                print("This may take a moment...")
-                print("="*60 + "\n")
+                logger.info("\n" + "="*60)
+                logger.info("Google Sheets OAuth Authentication Required")
+                logger.info("="*60)
+                logger.info("A browser window will open for authentication.")
+                logger.info("If no browser opens, visit the URL shown below.")
+                logger.info("This may take a moment...")
+                logger.info("="*60 + "\n")
                 
                 flow = InstalledAppFlow.from_client_secrets_file(
                     self.credentials_path, SCOPES
@@ -128,9 +133,9 @@ class GoogleSheetsClient:
                 # Make sure http://localhost:8080/ is in authorized redirect URIs in Google Cloud Console
                 try:
                     creds = flow.run_local_server(port=8080, open_browser=True)
-                    print("\n✓ Authentication successful!\n")
+                    logger.info("\n✓ Authentication successful!\n")
                 except Exception as e:
-                    print(f"\n✗ Authentication failed: {e}\n")
+                    logger.error(f"\n✗ Authentication failed: {e}\n")
                     raise Exception(
                         f"OAuth authentication failed: {str(e)}. "
                         "Please ensure http://localhost:8080/ is in your authorized redirect URIs in Google Cloud Console."
@@ -139,7 +144,7 @@ class GoogleSheetsClient:
             # Save credentials for next run
             with open(self.token_path, 'w') as token:
                 token.write(creds.to_json())
-            print(f"Credentials saved to {self.token_path}\n")
+            logger.info(f"Credentials saved to {self.token_path}\n")
         
         self.creds = creds
         self.service = build('sheets', 'v4', credentials=creds)
@@ -212,7 +217,7 @@ class GoogleSheetsClient:
                                 pass  # If parsing fails, leave as None
                     
                     # Parse duration
-                    estimated_duration_min = 30  # Default
+                    estimated_duration_min = DEFAULT_DURATION_MINUTES
                     if duration_str:
                         try:
                             estimated_duration_min = int(duration_str)
@@ -234,38 +239,25 @@ class GoogleSheetsClient:
                             category = legacy_mapping.get(category_str.lower(), TaskCategory.UNKNOWN)
                     
                     # Check for AI exclusion (period prefix)
-                    ai_excluded = title.startswith('.') if title else False
+                    ai_excluded = determine_ai_exclusion(title) if title else False
                     
-                    # Create task
-                    task = Task(
-                        id=str(uuid.uuid4()),
+                    # Create task using factory
+                    task = create_task_base(
                         source_type="google_sheets",
                         source_id=None,  # Could use row number or other identifier
                         title=title,
                         notes=notes,
-                        status=TaskStatus.OPEN,
-                        created_at=now,
-                        updated_at=now,
                         deadline=deadline,
                         estimated_duration_min=estimated_duration_min,
-                        duration_confidence=0.5,
                         category=category,
-                        energy_intensity=EnergyIntensity.MEDIUM,
-                        risk_score=0.3,
-                        impact_score=0.3,
-                        dependencies=[],
-                        flexibility_window=None,
                         ai_excluded=ai_excluded,
-                        manual_priority_locked=False,
-                        user_locked=False,
-                        manually_scheduled=False,
                     )
                     
                     tasks.append(task)
                     
                 except Exception as e:
                     # Log error but continue processing other rows
-                    print(f"Error parsing row: {e}")
+                    logger.warning(f"Error parsing row (continuing with next row): {type(e).__name__}: {str(e)[:100]}")
                     continue
             
             return tasks

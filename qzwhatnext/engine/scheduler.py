@@ -9,10 +9,10 @@ from datetime import datetime, timedelta
 from typing import List, Optional
 from qzwhatnext.models.task import Task
 from qzwhatnext.models.scheduled_block import ScheduledBlock, EntityType, ScheduledBy
+from qzwhatnext.models.constants import SCHEDULING_GRANULARITY_MINUTES
 
-
-# Default scheduling granularity: 30 minutes
-SCHEDULING_GRANULARITY_MINUTES = 30
+# Re-export for backward compatibility
+__all__ = ['SCHEDULING_GRANULARITY_MINUTES']
 
 
 class SchedulingResult:

@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from qzwhatnext.models.task import Task, TaskStatus, TaskCategory, EnergyIntensity
 from qzwhatnext.models.scheduled_block import ScheduledBlock
+from qzwhatnext.models.task_factory import create_task_base, determine_ai_exclusion
 from qzwhatnext.integrations.google_calendar import GoogleCalendarClient
 from qzwhatnext.integrations.google_sheets import GoogleSheetsClient
 from qzwhatnext.engine.ranking import stack_rank
@@ -19,6 +20,29 @@ from qzwhatnext.engine.scheduler import schedule_tasks, SchedulingResult
 from qzwhatnext.engine.inference import infer_category, generate_title, estimate_duration
 from qzwhatnext.database.database import get_db, init_db
 from qzwhatnext.database.repository import TaskRepository
+
+# Initialize logger
+logger = logging.getLogger(__name__)
+
+
+# Helper functions
+def _build_task_titles_dict(tasks: List[Task], scheduled_blocks: List[ScheduledBlock]) -> Dict[str, str]:
+    """Build a dictionary mapping task IDs to task titles for scheduled blocks.
+    
+    Args:
+        tasks: List of tasks
+        scheduled_blocks: List of scheduled blocks to extract task IDs from
+        
+    Returns:
+        Dictionary mapping entity_id to task title for task-type blocks
+    """
+    task_dict = {task.id: task for task in tasks}
+    task_titles = {}
+    for block in scheduled_blocks:
+        if block.entity_type == "task" and block.entity_id in task_dict:
+            task_titles[block.entity_id] = task_dict[block.entity_id].title
+    return task_titles
+
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -41,7 +65,13 @@ app.add_middleware(
 # Initialize database on startup
 @app.on_event("startup")
 async def startup_event():
-    """Initialize database on application startup."""
+    """Initialize database and logging on application startup."""
+    # Configure logging format if not already configured
+    if not logging.root.handlers:
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        )
     init_db()
 
 # In-memory schedule storage (schedule is not persisted)
@@ -463,42 +493,30 @@ async def create_task(request: TaskCreateRequest, db: Session = Depends(get_db))
         duplicates = repo.find_duplicates(request.source_type, request.source_id, request.title)
         if duplicates:
             # For MVP, we just log but still create (no auto-dedupe)
-            pass  # TODO: Add logging for duplicate detection
+            logger.warning(
+                f"Potential duplicate task detected: source_type={request.source_type}, "
+                f"source_id={request.source_id}, title={request.title[:50]}, "
+                f"found {len(duplicates)} existing task(s)"
+            )
     
-    # Create task from request
-    now = datetime.utcnow()
-    task = Task(
-        id=str(uuid.uuid4()),
+    # Create task using factory (applies defaults from constants)
+    task = create_task_base(
         source_type=request.source_type,
         source_id=request.source_id,
         title=request.title,
         notes=request.notes,
-        status=TaskStatus.OPEN,
-        created_at=now,
-        updated_at=now,
         deadline=request.deadline,
         estimated_duration_min=request.estimated_duration_min,
-        duration_confidence=0.5,
         category=request.category,
-        energy_intensity=EnergyIntensity.MEDIUM,
-        risk_score=0.3,
-        impact_score=0.3,
-        dependencies=[],
-        flexibility_window=None,
-        ai_excluded=request.title.startswith('.') if request.title else False,
-        manual_priority_locked=False,
-        user_locked=False,
-        manually_scheduled=False,
+        ai_excluded=determine_ai_exclusion(request.title) if request.title else False,
     )
     
     try:
         created_task = repo.create(task)
         return TaskResponse(task=created_task)
     except Exception as e:
+        logger.error(f"Failed to create task: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to create task: {str(e)}")
-
-
-logger = logging.getLogger(__name__)
 
 
 @app.post("/tasks/add_smart", response_model=TaskResponse, status_code=201)
@@ -518,9 +536,6 @@ async def add_smart_task(request: TaskAddSmartRequest, db: Session = Depends(get
     # Check if notes starts with "." for AI exclusion
     ai_excluded = request.notes.startswith('.') if request.notes else False
     
-    # Create task with placeholder title (will be updated)
-    now = datetime.utcnow()
-    
     # Determine title: try AI generation if not excluded, otherwise use fallback
     task_title = ""
     notes = request.notes or ""
@@ -528,28 +543,13 @@ async def add_smart_task(request: TaskAddSmartRequest, db: Session = Depends(get
     # Generate title if not AI-excluded
     if not ai_excluded and notes.strip():
         # Create temporary task object for inference (minimal fields needed)
-        temp_task = Task(
-            id=str(uuid.uuid4()),  # Temporary ID for inference
+        # Use factory but override title to empty string to avoid AI exclusion check
+        temp_task = create_task_base(
             source_type="api",
             source_id=None,
             title="",  # Empty title won't trigger AI exclusion check
             notes=notes,
-            status=TaskStatus.OPEN,
-            created_at=now,
-            updated_at=now,
-            deadline=None,
-            estimated_duration_min=30,
-            duration_confidence=0.5,
-            category=TaskCategory.UNKNOWN,
-            energy_intensity=EnergyIntensity.MEDIUM,
-            risk_score=0.3,
-            impact_score=0.3,
-            dependencies=[],
-            flexibility_window=None,
             ai_excluded=False,  # We already checked this above
-            manual_priority_locked=False,
-            user_locked=False,
-            manually_scheduled=False,
         )
         
         try:
@@ -573,29 +573,13 @@ async def add_smart_task(request: TaskAddSmartRequest, db: Session = Depends(get
         else:
             task_title = "Untitled Task"
     
-    # Create task with generated/fallback title
-    task = Task(
-        id=str(uuid.uuid4()),
+    # Create task with generated/fallback title using factory
+    task = create_task_base(
         source_type="api",
         source_id=None,
         title=task_title,
         notes=request.notes,
-        status=TaskStatus.OPEN,
-        created_at=now,
-        updated_at=now,
-        deadline=None,
-        estimated_duration_min=30,
-        duration_confidence=0.5,
-        category=TaskCategory.UNKNOWN,
-        energy_intensity=EnergyIntensity.MEDIUM,
-        risk_score=0.3,
-        impact_score=0.3,
-        dependencies=[],
-        flexibility_window=None,
         ai_excluded=ai_excluded,
-        manual_priority_locked=False,
-        user_locked=False,
-        manually_scheduled=False,
     )
     
     # Infer category and duration if not AI-excluded
@@ -646,6 +630,7 @@ async def list_tasks(db: Session = Depends(get_db)):
         tasks = repo.get_all()
         return TaskListResponse(tasks=tasks, count=len(tasks))
     except Exception as e:
+        logger.error(f"Failed to list tasks: {type(e).__name__}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to list tasks: {str(e)}")
 
 
@@ -694,7 +679,12 @@ async def update_task(task_id: str, request: TaskUpdateRequest, db: Session = De
     try:
         updated_task = repo.update(task)
         return TaskResponse(task=updated_task)
+    except ValueError as e:
+        # ValueError from repository means task not found
+        logger.warning(f"Task {task_id} not found for update")
+        raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
+        logger.error(f"Failed to update task {task_id}: {type(e).__name__}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to update task: {str(e)}")
 
 
@@ -747,7 +737,7 @@ async def import_from_sheets(request: ImportSheetsRequest, db: Session = Depends
                 saved_tasks.append(created_task)
             except Exception as e:
                 # Log error but continue with other tasks
-                print(f"Error saving task {task.title}: {e}")
+                logger.error(f"Error saving task '{task.title[:50]}': {type(e).__name__}: {str(e)}")
                 continue
         
         return ImportSheetsResponse(
@@ -803,11 +793,7 @@ async def build_schedule(db: Session = Depends(get_db)):
         schedule_store = schedule_result
         
         # Build task titles map for frontend lookup
-        task_dict = {task.id: task for task in tasks}
-        task_titles = {}
-        for block in schedule_result.scheduled_blocks:
-            if block.entity_type == "task" and block.entity_id in task_dict:
-                task_titles[block.entity_id] = task_dict[block.entity_id].title
+        task_titles = _build_task_titles_dict(tasks, schedule_result.scheduled_blocks)
         
         return ScheduleResponse(
             scheduled_blocks=schedule_result.scheduled_blocks,
@@ -816,6 +802,7 @@ async def build_schedule(db: Session = Depends(get_db)):
             task_titles=task_titles
         )
     except Exception as e:
+        logger.error(f"Failed to build schedule: {type(e).__name__}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to build schedule: {str(e)}")
 
 
@@ -828,11 +815,7 @@ async def view_schedule(db: Session = Depends(get_db)):
     # Build task titles map for frontend lookup
     repo = TaskRepository(db)
     tasks = repo.get_all()
-    task_dict = {task.id: task for task in tasks}
-    task_titles = {}
-    for block in schedule_store.scheduled_blocks:
-        if block.entity_type == "task" and block.entity_id in task_dict:
-            task_titles[block.entity_id] = task_dict[block.entity_id].title
+    task_titles = _build_task_titles_dict(tasks, schedule_store.scheduled_blocks)
     
     return ScheduleResponse(
         scheduled_blocks=schedule_store.scheduled_blocks,
@@ -870,6 +853,7 @@ async def sync_calendar(db: Session = Depends(get_db)):
             event_ids=[event['id'] for event in events]
         )
     except Exception as e:
+        logger.error(f"Failed to sync calendar: {type(e).__name__}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to sync calendar: {str(e)}")
 
 
