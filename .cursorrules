@@ -76,6 +76,8 @@ A task is AI-excluded if:
 - ❌ Treating Transition Time as a task category
 - ❌ Reordering the fixed priority hierarchy
 - ❌ Skipping audit logging for trust-critical actions
+- ❌ **Committing without secret scanning (MUST scan before every commit)**
+- ❌ Committing files with secrets (`.env`, `credentials.json`, `token.json`, etc.)
 
 ---
 
@@ -234,6 +236,7 @@ A task is AI-excluded if:
 - Use secure secret management (environment variables, secret managers)
 - Rotate secrets regularly
 - Never log secrets or credentials
+- **ALWAYS run secret scanning before commits** (see "Pre-Commit Secret Scanning" in Git & Version Control Practices)
 
 ---
 
@@ -256,11 +259,31 @@ A task is AI-excluded if:
 
 ## Git & Version Control Practices
 
+**Pre-Commit Secret Scanning (MUST ENFORCE BEFORE ANY COMMIT)**
+
+**MANDATORY:** Before committing, ALWAYS scan for secrets:
+1. Run `scripts/scan_secrets.sh` to scan staged files
+2. Check for known secret files (`.env`, `credentials.json`, `token.json`, `sheets_token.json`, `client_secret*.json`, `*.pem`, `*.key`, etc.)
+3. Scan file contents for common secret patterns (API keys, OAuth tokens, passwords, private keys, etc.)
+4. Verify `.gitignore` includes all secret file patterns
+5. **BLOCK the commit** if any secrets are detected
+6. If secrets are found:
+   - Report which files/patterns were detected
+   - Remove secret files from staging: `git reset HEAD <file>`
+   - Add patterns to `.gitignore` if missing
+   - Never proceed with commit until secrets are removed
+
+**This is critical for security. GitHub push protection will block pushes with secrets, but prevention is better than detection.**
+
 **Commit Messages**
-- Use clear, descriptive commit messages
+- **Subject line must explain the goal, problem solved, or enhancement made** (not just list files changed)
+- Focus on *why* the change was made and *what* problem it solves
+- Use format: "Verb: Problem/Goal/Enhancement" (e.g., "Fix: Prevent secrets from being committed", "Add: Secret scanning before commits", "Enhance: Improve error handling for API failures")
+- Avoid generic messages like "Update files" or "Fix bugs"
 - Reference relevant decision IDs or canonical docs when applicable
 - Keep commits focused (one logical change per commit)
-- Use conventional commit format when helpful
+- Use conventional commit format when helpful (fix:, feat:, refactor:, docs:, etc.)
+- Body (if needed) can list specific files or technical details
 
 **Branching & Workflow**
 - Keep main branch stable and deployable
@@ -325,3 +348,4 @@ Code is correct when:
 - ✅ Same inputs produce same outputs
 - ✅ Overflow is detected and notified (never silent)
 - ✅ Audit logs capture all trust-critical actions
+- ✅ **Secret scanning passes before every commit (no secrets in staged files)**

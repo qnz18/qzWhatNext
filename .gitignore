@@ -24,6 +24,12 @@ token.json
 client_secret*.json
 sheets_token.json
 
+# Private keys and certificates
+*.pem
+*.key
+*.p12
+*.pfx
+
 # Python cache
 *.pyc
 __pycache__/
