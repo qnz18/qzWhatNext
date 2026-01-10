@@ -45,6 +45,9 @@ __pycache__/
 # Logs
 *.log
 
+# Database files (auto-generated on first run)
+*.db
+
 # Distribution / packaging
 dist/
 build/
