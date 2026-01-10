@@ -22,6 +22,7 @@ ENV/
 credentials.json
 token.json
 client_secret*.json
+sheets_token.json
 
 # Python cache
 *.pyc
