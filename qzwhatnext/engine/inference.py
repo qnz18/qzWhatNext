@@ -20,6 +20,14 @@ logger = logging.getLogger(__name__)
 # Confidence threshold for using 'unknown' category
 CATEGORY_CONFIDENCE_THRESHOLD = 0.6
 
+# Confidence threshold for using duration estimate
+DURATION_CONFIDENCE_THRESHOLD = 0.6
+
+# Duration constraints
+MIN_DURATION_MIN = 5  # 5 minutes minimum
+MAX_DURATION_MIN = 600  # 600 minutes (10 hours) maximum
+DURATION_ROUNDING = 15  # Round to nearest 15 minutes
+
 # Initialize OpenAI client (singleton pattern)
 _openai_client: Optional[OpenAIClient] = None
 
@@ -125,6 +133,73 @@ def generate_title(task: Task, max_length: int = 100) -> Optional[str]:
         # Handle any errors gracefully - don't fail task creation
         logger.error(f"Error generating title for task {task.id}: {type(e).__name__}")
         return None
+
+
+def estimate_duration(task: Task) -> Tuple[int, float]:
+    """Estimate task duration with confidence score.
+    
+    This function:
+    - Checks AI exclusion BEFORE calling OpenAI (trust-critical)
+    - Applies constraints: rounding to 15 min, bounds (5-600 min)
+    - Uses default duration if confidence < threshold
+    - Returns (duration_minutes, confidence) where duration is 0 if estimation failed
+    
+    Args:
+        task: Task to estimate duration for
+        
+    Returns:
+        Tuple of (duration_minutes, confidence_score) where:
+        - duration_minutes is an integer in minutes (0 if estimation failed or below threshold)
+        - confidence is 0.0-1.0
+    """
+    # Check AI exclusion BEFORE any inference calls (trust-critical)
+    if is_ai_excluded(task):
+        logger.debug(f"Task {task.id} is AI-excluded. Returning duration 0.")
+        return (0, 0.0)
+    
+    # Extract notes for inference
+    notes = task.notes or ""
+    
+    # If no notes, return 0 duration
+    if not notes.strip():
+        logger.debug(f"Task {task.id} has no notes. Returning duration 0.")
+        return (0, 0.0)
+    
+    # Call OpenAI client to estimate duration
+    try:
+        openai_client = _get_openai_client()
+        duration_min, confidence = openai_client.estimate_duration(notes)
+        
+        # If estimation failed, return 0
+        if duration_min == 0:
+            logger.debug(f"Task {task.id} duration estimation returned 0 (failed)")
+            return (0, 0.0)
+        
+        # Apply confidence threshold: return 0 if confidence is too low
+        if confidence < DURATION_CONFIDENCE_THRESHOLD:
+            logger.debug(f"Task {task.id} duration inference confidence {confidence} below threshold {DURATION_CONFIDENCE_THRESHOLD}. Returning 0.")
+            return (0, 0.0)
+        
+        # Apply constraints: round to nearest 15 minutes
+        rounded_duration = round(duration_min / DURATION_ROUNDING) * DURATION_ROUNDING
+        
+        # Enforce minimum (5 minutes)
+        if rounded_duration < MIN_DURATION_MIN:
+            logger.debug(f"Task {task.id} duration {rounded_duration} below minimum {MIN_DURATION_MIN}. Using minimum.")
+            rounded_duration = MIN_DURATION_MIN
+        
+        # Enforce maximum (600 minutes / 10 hours)
+        if rounded_duration > MAX_DURATION_MIN:
+            logger.debug(f"Task {task.id} duration {rounded_duration} above maximum {MAX_DURATION_MIN}. Using maximum.")
+            rounded_duration = MAX_DURATION_MIN
+        
+        logger.debug(f"Task {task.id} estimated duration: {rounded_duration} minutes (original: {duration_min}) with confidence {confidence}")
+        return (rounded_duration, confidence)
+        
+    except Exception as e:
+        # Handle any errors gracefully - don't fail task creation
+        logger.error(f"Error estimating duration for task {task.id}: {type(e).__name__}")
+        return (0, 0.0)
 
 
 def infer_task_attributes(task: Task) -> Optional[Task]:

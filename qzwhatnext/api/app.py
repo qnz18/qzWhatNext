@@ -16,7 +16,7 @@ from qzwhatnext.integrations.google_calendar import GoogleCalendarClient
 from qzwhatnext.integrations.google_sheets import GoogleSheetsClient
 from qzwhatnext.engine.ranking import stack_rank
 from qzwhatnext.engine.scheduler import schedule_tasks, SchedulingResult
-from qzwhatnext.engine.inference import infer_category, generate_title
+from qzwhatnext.engine.inference import infer_category, generate_title, estimate_duration
 from qzwhatnext.database.database import get_db, init_db
 from qzwhatnext.database.repository import TaskRepository
 
@@ -598,21 +598,38 @@ async def add_smart_task(request: TaskAddSmartRequest, db: Session = Depends(get
         manually_scheduled=False,
     )
     
-    # Infer category if not AI-excluded
+    # Infer category and duration if not AI-excluded
     if not ai_excluded:
         try:
-            inferred_category, confidence = infer_category(task)
+            inferred_category, category_confidence = infer_category(task)
             # Update category if confidence meets threshold
             # (infer_category already applies threshold, so if it returns non-UNKNOWN, use it)
             if inferred_category != TaskCategory.UNKNOWN:
                 task.category = inferred_category
-                logger.debug(f"Task {task.id} category inferred as {inferred_category.value} with confidence {confidence}")
+                logger.debug(f"Task {task.id} category inferred as {inferred_category.value} with confidence {category_confidence}")
             else:
-                logger.debug(f"Task {task.id} category inference returned UNKNOWN (confidence: {confidence})")
+                logger.debug(f"Task {task.id} category inference returned UNKNOWN (confidence: {category_confidence})")
         except Exception as e:
             # Log error but don't fail task creation
             logger.error(f"Error inferring category for task {task.id}: {type(e).__name__}")
             # Continue with UNKNOWN category
+        
+        # Estimate duration
+        try:
+            estimated_duration, duration_confidence = estimate_duration(task)
+            # Update duration if estimation succeeds (returns duration > 0 and confidence >= threshold)
+            # (estimate_duration already applies threshold and constraints, so if it returns non-zero, use it)
+            if estimated_duration > 0:
+                task.estimated_duration_min = estimated_duration
+                task.duration_confidence = duration_confidence
+                logger.debug(f"Task {task.id} duration estimated as {estimated_duration} minutes with confidence {duration_confidence}")
+            else:
+                logger.debug(f"Task {task.id} duration estimation returned 0 (failed or below threshold)")
+                # Keep default 30 minutes with 0.5 confidence
+        except Exception as e:
+            # Log error but don't fail task creation
+            logger.error(f"Error estimating duration for task {task.id}: {type(e).__name__}")
+            # Continue with default 30 minutes
     
     try:
         created_task = repo.create(task)

@@ -60,6 +60,27 @@ Generate a clear, descriptive title that summarizes the task. The title should b
 
 Respond with only the title text, nothing else."""
 
+# Duration estimation prompt template
+DURATION_PROMPT_TEMPLATE = """You are a task duration estimation assistant. Given a task note, estimate how long it will take to complete the task.
+
+Task note: "{notes}"
+
+Provide a realistic estimate in minutes for completing this task. Consider:
+- The complexity and scope of the task
+- Typical time needed for similar tasks
+- Preparation, execution, and any follow-up work
+
+Respond with a JSON object containing:
+- "duration_min": An integer representing the estimated duration in minutes
+- "confidence": A number between 0.0 and 1.0 indicating your confidence in the estimate
+
+Example responses:
+- Quick task like "Schedule doctor appointment": {{"duration_min": 15, "confidence": 0.9}}
+- Medium task like "Complete quarterly report": {{"duration_min": 120, "confidence": 0.8}}
+- Complex task like "Plan family vacation": {{"duration_min": 180, "confidence": 0.7}}
+
+Respond only with the JSON object, no other text."""
+
 
 class OpenAIClient:
     """Client for OpenAI API integration."""
@@ -258,4 +279,101 @@ class OpenAIClient:
             logger.error(f"Error generating title with OpenAI API: {type(e).__name__}")
             # Don't log full error message as it might contain sensitive info
             return ""
+    
+    def estimate_duration(self, notes: str) -> Tuple[int, float]:
+        """Estimate task duration from notes using OpenAI API.
+        
+        Args:
+            notes: Task notes/description to analyze
+            
+        Returns:
+            Tuple of (duration_minutes, confidence_score) where:
+            - duration_minutes is an integer in minutes (0 if estimation failed)
+            - confidence is 0.0-1.0
+            
+            Returns (0, 0.0) if:
+            - API key is not configured
+            - API call fails
+            - Response parsing fails
+            - Notes are empty
+        """
+        # Check if client is available
+        if not self.client:
+            logger.debug("OpenAI client not initialized. Returning duration 0.")
+            return (0, 0.0)
+        
+        # Handle empty notes
+        if not notes or not notes.strip():
+            logger.debug("Empty notes provided. Returning duration 0.")
+            return (0, 0.0)
+        
+        try:
+            # Prepare prompt
+            prompt = DURATION_PROMPT_TEMPLATE.format(notes=notes)
+            
+            # Call OpenAI API
+            response = self.client.chat.completions.create(
+                model=OPENAI_MODEL,
+                messages=[
+                    {"role": "system", "content": "You are a task duration estimation assistant. Respond only with valid JSON."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.3,  # Lower temperature for more deterministic responses
+                max_tokens=100,   # JSON response is short
+            )
+            
+            # Extract response content
+            response_content = response.choices[0].message.content.strip()
+            
+            # Parse JSON response
+            try:
+                # Handle cases where response might have markdown code blocks
+                if response_content.startswith("```json"):
+                    response_content = response_content[7:]  # Remove ```json
+                if response_content.startswith("```"):
+                    response_content = response_content[3:]   # Remove ```
+                if response_content.endswith("```"):
+                    response_content = response_content[:-3]  # Remove trailing ```
+                response_content = response_content.strip()
+                
+                result = json.loads(response_content)
+                duration_min = int(result.get("duration_min", 0))
+                confidence = float(result.get("confidence", 0.0))
+                
+                # Validate duration is positive
+                if duration_min < 0:
+                    logger.warning(f"Invalid duration value {duration_min} from OpenAI. Using 0.")
+                    return (0, 0.0)
+                
+                # Validate confidence range
+                if confidence < 0.0 or confidence > 1.0:
+                    logger.warning(f"Invalid confidence value {confidence} from OpenAI. Using 0.0.")
+                    confidence = 0.0
+                
+                logger.debug(f"OpenAI estimated duration: {duration_min} minutes with confidence {confidence}")
+                return (duration_min, confidence)
+                
+            except json.JSONDecodeError as e:
+                logger.warning(f"Failed to parse OpenAI JSON response for duration: {e}. Response: {response_content[:100]}")
+                return (0, 0.0)
+            
+        except APIError as e:
+            # Handle OpenAI API errors (rate limits, quota issues, invalid key, etc.)
+            error_code = getattr(e, 'code', None)
+            status_code = getattr(e, 'status_code', None)
+            
+            if error_code == 'insufficient_quota':
+                logger.warning("OpenAI API quota insufficient for duration estimation. Please check billing/payment method in OpenAI dashboard.")
+            elif status_code == 429:
+                logger.warning("OpenAI API rate limit exceeded for duration estimation. Please wait before retrying.")
+            else:
+                logger.error(f"OpenAI API error during duration estimation: {status_code or 'unknown'} ({error_code or 'unknown'})")
+            
+            # Don't log full error message as it might contain sensitive info
+            return (0, 0.0)
+        except Exception as e:
+            # Handle any other errors (network, parsing, etc.)
+            logger.error(f"Error estimating duration with OpenAI API: {type(e).__name__}")
+            # Don't log full error message as it might contain sensitive info
+            return (0, 0.0)
 
