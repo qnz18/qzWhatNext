@@ -6,7 +6,7 @@ from typing import List, Optional, Dict
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
 from qzwhatnext.models.task import Task, TaskStatus, TaskCategory, EnergyIntensity
@@ -53,9 +53,27 @@ class TaskCreateRequest(BaseModel):
     notes: Optional[str] = None
     deadline: Optional[datetime] = None
     estimated_duration_min: int = 30
-    category: TaskCategory = TaskCategory.OTHER
+    category: TaskCategory = TaskCategory.UNKNOWN
     source_type: str = "api"
     source_id: Optional[str] = None
+    
+    @field_validator('category', mode='before')
+    @classmethod
+    def validate_category(cls, v):
+        """Convert invalid categories to UNKNOWN."""
+        if v is None:
+            return TaskCategory.UNKNOWN
+        
+        # If it's already a TaskCategory enum, return it
+        if isinstance(v, TaskCategory):
+            return v
+        
+        # Try to convert string to enum
+        try:
+            return TaskCategory(str(v).lower())
+        except (ValueError, AttributeError):
+            # Invalid category - default to UNKNOWN
+            return TaskCategory.UNKNOWN
 
 
 class TaskUpdateRequest(BaseModel):
@@ -70,6 +88,24 @@ class TaskUpdateRequest(BaseModel):
     risk_score: Optional[float] = None
     impact_score: Optional[float] = None
     ai_excluded: Optional[bool] = None
+    
+    @field_validator('category', mode='before')
+    @classmethod
+    def validate_category(cls, v):
+        """Convert invalid categories to UNKNOWN if provided."""
+        if v is None:
+            return None  # Keep None for optional fields
+        
+        # If it's already a TaskCategory enum, return it
+        if isinstance(v, TaskCategory):
+            return v
+        
+        # Try to convert string to enum
+        try:
+            return TaskCategory(str(v).lower())
+        except (ValueError, AttributeError):
+            # Invalid category - default to UNKNOWN
+            return TaskCategory.UNKNOWN
 
 
 class TaskResponse(BaseModel):
@@ -154,10 +190,14 @@ async def root():
                     <label for="taskCategory">Category</label>
                     <select id="taskCategory">
                         <option value="work">Work</option>
-                        <option value="personal">Personal</option>
+                        <option value="child">Child</option>
+                        <option value="family">Family</option>
                         <option value="health">Health</option>
-                        <option value="learning">Learning</option>
-                        <option value="other" selected>Other</option>
+                        <option value="personal">Personal</option>
+                        <option value="ideas">Ideas</option>
+                        <option value="home">Home</option>
+                        <option value="admin">Admin</option>
+                        <option value="unknown" selected>Unknown</option>
                     </select>
                 </div>
                 <button type="submit">Create Task</button>

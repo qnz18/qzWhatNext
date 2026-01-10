@@ -48,28 +48,35 @@ def assign_tier(task: Task) -> int:
     if _has_high_impact(task):
         return TIER_IMPACT
     
+    # Get category as string for backward compatibility and consistent checking
+    category_str = task.category.value if hasattr(task.category, 'value') else str(task.category)
+    category_str = category_str.lower()
+    
     # Tier 4: Child-related needs
-    if task.category == TaskCategory.CHILD:
+    if task.category == TaskCategory.CHILD or category_str == 'child':
         return TIER_CHILD
     
     # Tier 5: Personal health needs
-    if task.category == TaskCategory.HEALTH:
+    if task.category == TaskCategory.HEALTH or category_str == 'health':
         return TIER_HEALTH
     
     # Tier 6: Work obligations
-    if task.category == TaskCategory.WORK:
+    if task.category == TaskCategory.WORK or category_str == 'work':
         return TIER_WORK
     
-    # Tier 7: Stress reduction
-    if task.category == TaskCategory.STRESS:
+    # Tier 7: Stress reduction (personal and ideas)
+    # Includes backward compatibility for old 'stress' category
+    if task.category in [TaskCategory.PERSONAL, TaskCategory.IDEAS] or category_str in ['stress', 'personal', 'ideas']:
         return TIER_STRESS
     
     # Tier 8: Family/social commitments
-    if task.category in [TaskCategory.FAMILY, TaskCategory.SOCIAL]:
+    # Includes backward compatibility for old 'social' category
+    if task.category == TaskCategory.FAMILY or category_str in ['social', 'family']:
         return TIER_FAMILY
     
     # Tier 9: Home care (default)
-    if task.category == TaskCategory.HOME:
+    # Includes backward compatibility for old 'other' category
+    if task.category in [TaskCategory.HOME, TaskCategory.ADMIN, TaskCategory.UNKNOWN] or category_str in ['other', 'home', 'admin', 'unknown']:
         return TIER_HOME
     
     # Default to lowest tier for uncategorized tasks

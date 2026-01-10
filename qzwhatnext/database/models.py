@@ -36,7 +36,7 @@ class TaskDB(Base):
     duration_confidence = Column(Float, nullable=False, default=0.5)
     
     # Classification fields
-    category = Column(String, nullable=False, default=TaskCategory.OTHER.value)
+    category = Column(String, nullable=False, default=TaskCategory.UNKNOWN.value)
     energy_intensity = Column(String, nullable=False, default=EnergyIntensity.MEDIUM.value)
     risk_score = Column(Float, nullable=False, default=0.3)
     impact_score = Column(Float, nullable=False, default=0.3)
@@ -67,6 +67,20 @@ class TaskDB(Base):
                     datetime.fromisoformat(self.flexibility_window[1]) if isinstance(self.flexibility_window[1], str) else self.flexibility_window[1]
                 )
         
+        # Handle legacy category values (migration support)
+        category_mapping = {
+            'social': TaskCategory.FAMILY,
+            'stress': TaskCategory.PERSONAL,
+            'other': TaskCategory.UNKNOWN,
+        }
+        category = category_mapping.get(self.category.lower(), None)
+        if category is None:
+            try:
+                category = TaskCategory(self.category)
+            except ValueError:
+                # Fallback to UNKNOWN for unknown category values
+                category = TaskCategory.UNKNOWN
+        
         return Task(
             id=self.id,
             source_type=self.source_type,
@@ -79,7 +93,7 @@ class TaskDB(Base):
             deadline=self.deadline,
             estimated_duration_min=self.estimated_duration_min,
             duration_confidence=self.duration_confidence,
-            category=TaskCategory(self.category),
+            category=category,
             energy_intensity=EnergyIntensity(self.energy_intensity),
             risk_score=self.risk_score,
             impact_score=self.impact_score,

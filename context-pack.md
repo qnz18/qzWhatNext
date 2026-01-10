@@ -299,7 +299,7 @@ The primary visualization of qzWhatNext is an **auto-maintained calendar**. The 
 
 A simple custom UI provides essential functionality for viewing and refining the schedule:
 
-**Display Format:**
+**Display Format:*
 - Chronological list/table view of scheduled tasks
 - Shows tasks in stack-ranked order with time assignments
 

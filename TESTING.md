@@ -41,7 +41,7 @@ curl http://localhost:8000/health
 ```bash
 curl -X POST http://localhost:8000/tasks \
   -H "Content-Type: application/json" \
-  -d '{"title": "Test Task", "category": "other"}'
+  -d '{"title": "Test Task", "category": "unknown"}'
 ```
 
 #### List Tasks
@@ -125,7 +125,7 @@ task1 = Task(
     status=TaskStatus.OPEN,
     created_at=datetime.utcnow(),
     updated_at=datetime.utcnow(),
-    category=TaskCategory.OTHER
+    category=TaskCategory.UNKNOWN
 )
 task2 = Task(
     id=str(uuid.uuid4()),
@@ -135,7 +135,7 @@ task2 = Task(
     status=TaskStatus.OPEN,
     created_at=datetime.utcnow(),
     updated_at=datetime.utcnow(),
-    category=TaskCategory.OTHER
+    category=TaskCategory.UNKNOWN
 )
 
 created1 = repo.create(task1)
@@ -163,7 +163,7 @@ db.close()
    ```bash
    curl -X POST http://localhost:8000/tasks \
      -H "Content-Type: application/json" \
-     -d '{"title": ".Private task", "category": "other"}'
+     -d '{"title": ".Private task", "category": "unknown"}'
    ```
 2. Verify the task has `ai_excluded=True` (check response or get task)
 3. Verify the task is still scheduled (AI exclusion doesn't prevent scheduling)
@@ -185,7 +185,7 @@ Test that tasks are assigned to correct tiers:
    for i in {1..50}; do
      curl -X POST http://localhost:8000/tasks \
        -H "Content-Type: application/json" \
-       -d "{\"title\": \"Task $i\", \"category\": \"other\", \"estimated_duration_min\": 60}"
+       -d "{\"title\": \"Task $i\", \"category\": \"unknown\", \"estimated_duration_min\": 60}"
    done
    ```
 2. Build schedule: `curl -X POST http://localhost:8000/schedule`

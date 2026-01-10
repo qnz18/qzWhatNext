@@ -52,7 +52,7 @@ A Task has the following fields:
 - deadline: datetime or null
 - estimated_duration_min: integer
 - duration_confidence: float (0–1)
-- category: work | child | health | home | family | social | stress | admin | other
+- category: work | child | family | health | personal | ideas | home | admin | unknown
 - energy_intensity: low | medium | high
 - risk_score: float (0–1)
 - impact_score: float (0–1)
@@ -195,7 +195,7 @@ AI may **not**:
 
 - duration: 30 minutes
 - energy: medium
-- category: other
+- category: unknown
 - risk: 0.3
 - impact: 0.3
 

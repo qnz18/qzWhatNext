@@ -220,12 +220,18 @@ class GoogleSheetsClient:
                             pass
                     
                     # Parse category
-                    category = TaskCategory.OTHER
+                    category = TaskCategory.UNKNOWN
                     if category_str:
                         try:
                             category = TaskCategory(category_str.lower())
                         except (ValueError, KeyError):
-                            pass
+                            # Handle legacy category values
+                            legacy_mapping = {
+                                'social': TaskCategory.FAMILY,
+                                'stress': TaskCategory.PERSONAL,
+                                'other': TaskCategory.UNKNOWN,
+                            }
+                            category = legacy_mapping.get(category_str.lower(), TaskCategory.UNKNOWN)
                     
                     # Check for AI exclusion (period prefix)
                     ai_excluded = title.startswith('.') if title else False

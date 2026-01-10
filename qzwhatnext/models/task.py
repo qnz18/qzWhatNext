@@ -16,13 +16,13 @@ class TaskCategory(str, Enum):
     """Task category enumeration."""
     WORK = "work"
     CHILD = "child"
-    HEALTH = "health"
-    HOME = "home"
     FAMILY = "family"
-    SOCIAL = "social"
-    STRESS = "stress"
+    HEALTH = "health"
+    PERSONAL = "personal"
+    IDEAS = "ideas"
+    HOME = "home"
     ADMIN = "admin"
-    OTHER = "other"
+    UNKNOWN = "unknown"
 
 
 class EnergyIntensity(str, Enum):
@@ -46,7 +46,7 @@ class Task(BaseModel):
     deadline: Optional[datetime] = Field(None, description="Task deadline")
     estimated_duration_min: int = Field(30, description="Estimated duration in minutes")
     duration_confidence: float = Field(0.5, ge=0.0, le=1.0, description="Confidence in duration estimate")
-    category: TaskCategory = Field(TaskCategory.OTHER, description="Task category")
+    category: TaskCategory = Field(TaskCategory.UNKNOWN, description="Task category")
     energy_intensity: EnergyIntensity = Field(EnergyIntensity.MEDIUM, description="Energy intensity")
     risk_score: float = Field(0.3, ge=0.0, le=1.0, description="Risk of negative consequence")
     impact_score: float = Field(0.3, ge=0.0, le=1.0, description="Downstream impact score")
