@@ -1,7 +1,7 @@
 # qzWhatNext – Canonical Context Pack
 
 Version: 0.1.0  
-Last Updated: 2025-01-XX  
+Last Updated: 2025-01-10  
 Status: Locked (MVP)
 
 ---
@@ -70,6 +70,7 @@ This rule exists to preserve privacy and trust.
 
 AI may assist with **structured inference only**, including:
 - Task category detection
+- Task title generation (from notes)
 - Duration estimation
 - Energy intensity inference
 - Risk and impact estimation

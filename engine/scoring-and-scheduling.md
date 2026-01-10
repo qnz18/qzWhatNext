@@ -1,7 +1,7 @@
 # qzWhatNext – Scoring & Scheduling Engine Spec (v1)
 
 **Version:** 0.1.0  
-**Last Updated:** 2025-01-XX  
+**Last Updated:** 2025-01-10  
 **Status:** Buildable MVP Spec  
 **Scope:** Deterministic engine with AI augmentation hooks (non-authoritative)
 
@@ -288,9 +288,17 @@ MVP uses base task durations as-is. No padding or Transition Time modeling in MV
 
 **Duration Usage:**
 - Tasks use their estimated_duration_min field directly
+- Durations may be AI-estimated via OpenAI API (see D-035) or manually specified
+- AI-estimated durations are rounded to 15-minute increments and bounded between 5-600 minutes
 - No padding applied
 - No Transition Time entities
 - Simplest possible MVP scope
+
+**Duration Estimation (Optional):**
+- When tasks are created via `/tasks/add_smart` endpoint, duration may be automatically estimated from notes
+- Estimation uses confidence threshold (0.6) - only high-confidence estimates are used
+- Falls back to default 30 minutes if estimation fails or confidence is too low
+- Respects AI exclusion rules (no estimation for excluded tasks)
 
 ### 12.2 Future: Task Padding and Transition Time
 

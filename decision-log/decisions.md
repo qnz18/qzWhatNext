@@ -1,7 +1,7 @@
 # qzWhatNext – Decision Log
 
 Version: 0.1.0  
-Last Updated: 2025-01-XX  
+Last Updated: 2025-01-10  
 Status: Locked (MVP decisions)
 
 This log records all non-obvious product and engine decisions that govern qzWhatNext.
@@ -59,16 +59,17 @@ AI may assist with inference but never controls outcomes.
 ## D-004 — AI Exclusion via Task Name Prefix
 
 **Decision:**  
-Any task whose title begins with a period (`.`) is always excluded from AI reasoning.
+Any task whose title or notes field begins with a period (`.`) is always excluded from AI reasoning.
 
 **Rationale:**  
-Provides a fast, explicit, user-controlled privacy and trust mechanism.
+Provides a fast, explicit, user-controlled privacy and trust mechanism. Notes field is checked because tasks created via `/tasks/add_smart` have auto-generated titles, so exclusion must be determined from notes.
 
 **Implications:**  
-- No AI inference
+- No AI inference (category, title, duration, etc.)
 - No automatic reclassification
 - No automatic tier changes
 - Task still participates in deterministic scheduling
+- AI exclusion is checked BEFORE any OpenAI API calls (trust-critical)
 
 **Status:** Locked
 
@@ -572,6 +573,36 @@ Further simplifies MVP scope. Transition time considerations (padding or explici
 - Simplifies scheduling algorithm and data models for MVP
 
 **Status:** Locked (Future)
+
+---
+
+## D-035 — OpenAI API Integration for AI-Assisted Inference
+
+**Decision:**  
+qzWhatNext uses OpenAI API (gpt-4o-mini model) for AI-assisted task attribute inference, specifically for category detection, title generation, and duration estimation via the `/tasks/add_smart` endpoint.
+
+**Rationale:**  
+AI inference improves user experience by automatically categorizing tasks, generating readable titles, and estimating durations from notes, reducing manual input while maintaining trust through confidence thresholds and fallback behaviors.
+
+**Implementation Details:**
+- **Category Inference**: Infers task category from notes with confidence score (threshold: 0.6)
+- **Title Generation**: Generates concise, actionable titles from notes (max 100 characters)
+- **Duration Estimation**: Estimates task duration in minutes with constraints:
+  - Minimum: 5 minutes
+  - Maximum: 600 minutes (10 hours)
+  - Rounding: Nearest 15 minutes
+  - Confidence threshold: 0.6
+- **AI Exclusion**: All inference respects AI exclusion rules (tasks starting with "." or flagged as excluded are never sent to OpenAI)
+- **Fallback Behavior**: On API failure or low confidence, uses defaults (UNKNOWN category, truncated notes as title, 30 minutes duration)
+
+**Implications:**  
+- Requires `OPENAI_API_KEY` environment variable (optional - graceful degradation if not configured)
+- API failures never prevent task creation (fallback to defaults)
+- All inference checks AI exclusion BEFORE any API calls (trust-critical)
+- Confidence thresholds ensure only high-confidence inferences are used
+- Duration constraints ensure realistic scheduling bounds
+
+**Status:** Locked
 
 ---
 
