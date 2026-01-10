@@ -164,9 +164,11 @@ async def root():
             body { font-family: Arial, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; }
             button { padding: 10px 20px; margin: 5px; cursor: pointer; }
             .section { margin: 20px 0; padding: 15px; border: 1px solid #ddd; border-radius: 5px; }
-            table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+            table { width: 100%; border-collapse: collapse; }
             th, td { padding: 8px; text-align: left; border-bottom: 1px solid #ddd; }
-            th { background-color: #f2f2f2; }
+            th { background-color: #f2f2f2; position: sticky; top: 0; z-index: 10; }
+            td.notes { max-width: 300px; word-wrap: break-word; white-space: normal; }
+            .tasks-container { max-height: 500px; overflow-y: auto; border: 1px solid #ddd; border-radius: 5px; margin-top: 10px; }
             input, textarea, select { width: 100%; padding: 8px; margin: 5px 0; box-sizing: border-box; }
             label { display: block; margin-top: 10px; font-weight: bold; }
             .form-group { margin: 10px 0; }
@@ -175,6 +177,29 @@ async def root():
     <body>
         <h1>qzWhatNext</h1>
         <p>Continuously tells you what you should be doing right now and immediately next.</p>
+        
+        <div class="section">
+            <h2>Actions</h2>
+            <button onclick="buildSchedule()">Build Schedule</button>
+            <button onclick="syncCalendar()">Sync to Google Calendar</button>
+            <button onclick="viewSchedule()">View Schedule</button>
+            <button onclick="viewTasks()">View All Tasks</button>
+        </div>
+        
+        <div class="section">
+            <h2>Status</h2>
+            <div id="status"></div>
+        </div>
+        
+        <div class="section">
+            <h2>Tasks</h2>
+            <div id="tasks"></div>
+        </div>
+        
+        <div class="section">
+            <h2>Schedule</h2>
+            <div id="schedule"></div>
+        </div>
         
         <div class="section">
             <h2>Create Task</h2>
@@ -228,29 +253,6 @@ async def root():
                 </div>
                 <button type="submit">Import Tasks</button>
             </form>
-        </div>
-        
-        <div class="section">
-            <h2>Actions</h2>
-            <button onclick="buildSchedule()">Build Schedule</button>
-            <button onclick="syncCalendar()">Sync to Google Calendar</button>
-            <button onclick="viewSchedule()">View Schedule</button>
-            <button onclick="viewTasks()">View All Tasks</button>
-        </div>
-        
-        <div class="section">
-            <h2>Status</h2>
-            <div id="status"></div>
-        </div>
-        
-        <div class="section">
-            <h2>Tasks</h2>
-            <div id="tasks"></div>
-        </div>
-        
-        <div class="section">
-            <h2>Schedule</h2>
-            <div id="schedule"></div>
         </div>
         
         <script>
@@ -364,16 +366,18 @@ async def root():
                     }
                     
                     let html = `<p><strong>Total tasks: ${data.count}</strong></p>`;
-                    html += '<table><tr><th>Title</th><th>Category</th><th>Duration</th><th>Status</th></tr>';
+                    html += '<div class="tasks-container"><table><tr><th>Title</th><th>Category</th><th>Duration</th><th>Status</th><th>Notes</th></tr>';
                     data.tasks.forEach(task => {
+                        const notes = task.notes ? task.notes.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;') : '';
                         html += `<tr>
                             <td>${task.title}</td>
                             <td>${task.category || 'N/A'}</td>
                             <td>${task.estimated_duration_min || 30} min</td>
                             <td>${task.status || 'OPEN'}</td>
+                            <td class="notes">${notes || 'N/A'}</td>
                         </tr>`;
                     });
-                    html += '</table>';
+                    html += '</table></div>';
                     
                     tasksDiv.innerHTML = html;
                 } catch (error) {

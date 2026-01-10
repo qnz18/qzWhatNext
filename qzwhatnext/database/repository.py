@@ -2,7 +2,7 @@
 
 from typing import List, Optional
 from sqlalchemy.orm import Session
-from sqlalchemy import and_
+from sqlalchemy import and_, desc
 
 from qzwhatnext.models.task import Task
 from qzwhatnext.database.models import TaskDB
@@ -28,8 +28,8 @@ class TaskRepository:
         return task_db.to_pydantic() if task_db else None
     
     def get_all(self) -> List[Task]:
-        """Get all tasks."""
-        tasks_db = self.db.query(TaskDB).all()
+        """Get all tasks sorted by creation date (newest first)."""
+        tasks_db = self.db.query(TaskDB).order_by(desc(TaskDB.created_at)).all()
         return [task_db.to_pydantic() for task_db in tasks_db]
     
     def get_open(self) -> List[Task]:
