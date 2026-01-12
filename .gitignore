@@ -35,6 +35,14 @@ sheets_token.json
 __pycache__/
 .pytest_cache/
 
+# Coverage reports
+.coverage
+.coverage.*
+coverage.json
+coverage.xml
+htmlcov/
+*.cover
+
 # IDE
 .vscode/
 .idea/
