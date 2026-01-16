@@ -31,24 +31,35 @@ class TaskRepository:
             logger.error(f"Failed to create task {task.id}: {type(e).__name__}: {str(e)}")
             raise
     
-    def get(self, task_id: str) -> Optional[Task]:
-        """Get task by ID."""
-        task_db = self.db.query(TaskDB).filter(TaskDB.id == task_id).first()
+    def get(self, user_id: str, task_id: str) -> Optional[Task]:
+        """Get task by ID for a specific user."""
+        task_db = self.db.query(TaskDB).filter(
+            TaskDB.id == task_id,
+            TaskDB.user_id == user_id
+        ).first()
         return task_db.to_pydantic() if task_db else None
     
-    def get_all(self) -> List[Task]:
-        """Get all tasks sorted by creation date (newest first)."""
-        tasks_db = self.db.query(TaskDB).order_by(desc(TaskDB.created_at)).all()
+    def get_all(self, user_id: str) -> List[Task]:
+        """Get all tasks for a user sorted by creation date (newest first)."""
+        tasks_db = self.db.query(TaskDB).filter(
+            TaskDB.user_id == user_id
+        ).order_by(desc(TaskDB.created_at)).all()
         return [task_db.to_pydantic() for task_db in tasks_db]
     
-    def get_open(self) -> List[Task]:
-        """Get all open (non-completed) tasks."""
-        tasks_db = self.db.query(TaskDB).filter(TaskDB.status == "open").all()
+    def get_open(self, user_id: str) -> List[Task]:
+        """Get all open (non-completed) tasks for a user."""
+        tasks_db = self.db.query(TaskDB).filter(
+            TaskDB.user_id == user_id,
+            TaskDB.status == "open"
+        ).all()
         return [task_db.to_pydantic() for task_db in tasks_db]
     
     def update(self, task: Task) -> Task:
-        """Update an existing task."""
-        task_db = self.db.query(TaskDB).filter(TaskDB.id == task.id).first()
+        """Update an existing task (user_id must match task.user_id)."""
+        task_db = self.db.query(TaskDB).filter(
+            TaskDB.id == task.id,
+            TaskDB.user_id == task.user_id
+        ).first()
         if not task_db:
             raise ValueError(f"Task {task.id} not found")
         
@@ -88,9 +99,12 @@ class TaskRepository:
             logger.error(f"Failed to update task {task.id}: {type(e).__name__}: {str(e)}")
             raise
     
-    def delete(self, task_id: str) -> bool:
-        """Delete a task by ID."""
-        task_db = self.db.query(TaskDB).filter(TaskDB.id == task_id).first()
+    def delete(self, user_id: str, task_id: str) -> bool:
+        """Delete a task by ID for a specific user."""
+        task_db = self.db.query(TaskDB).filter(
+            TaskDB.id == task_id,
+            TaskDB.user_id == user_id
+        ).first()
         if not task_db:
             return False
         
@@ -104,9 +118,10 @@ class TaskRepository:
             logger.error(f"Failed to delete task {task_id}: {type(e).__name__}: {str(e)}")
             raise
     
-    def find_duplicates(self, source_type: str, source_id: Optional[str], title: str) -> List[Task]:
-        """Find potential duplicate tasks (matching source_type, source_id, title)."""
+    def find_duplicates(self, user_id: str, source_type: str, source_id: Optional[str], title: str) -> List[Task]:
+        """Find potential duplicate tasks (matching user_id, source_type, source_id, title)."""
         conditions = [
+            TaskDB.user_id == user_id,
             TaskDB.source_type == source_type,
             TaskDB.title == title
         ]

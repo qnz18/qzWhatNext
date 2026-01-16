@@ -36,6 +36,7 @@ class Task(BaseModel):
     """Canonical Task model."""
     
     id: str = Field(..., description="Unique task identifier (UUID v4)")
+    user_id: str = Field(..., description="User ID who owns this task")
     source_type: str = Field(..., description="Source system type (e.g., 'google_sheets', 'api', 'todoist')")
     source_id: Optional[str] = Field(None, description="External ID in source system (null for API-created tasks)")
     title: str = Field(..., description="Task title")

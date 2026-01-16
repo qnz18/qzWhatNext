@@ -235,3 +235,4 @@ class TestRootEndpoint:
         assert "text/html" in response.headers["content-type"]
         assert "qzWhatNext" in response.text
 
+

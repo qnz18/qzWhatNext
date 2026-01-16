@@ -151,6 +151,7 @@ class GoogleSheetsClient:
     
     def import_tasks(
         self,
+        user_id: str,
         spreadsheet_id: str,
         range_name: str = "Sheet1!A1:E10",
         has_header: bool = True
@@ -243,6 +244,7 @@ class GoogleSheetsClient:
                     
                     # Create task using factory
                     task = create_task_base(
+                        user_id=user_id,
                         source_type="google_sheets",
                         source_id=None,  # Could use row number or other identifier
                         title=title,

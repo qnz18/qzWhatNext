@@ -3,11 +3,12 @@
 from datetime import datetime
 from typing import Optional, List
 import uuid
-from sqlalchemy import Column, String, Integer, Float, Boolean, DateTime, JSON
+from sqlalchemy import Column, String, Integer, Float, Boolean, DateTime, JSON, ForeignKey
 
 from typing import Union, TypeVar, Type
 from qzwhatnext.database.database import Base
 from qzwhatnext.models.task import TaskStatus, TaskCategory, EnergyIntensity
+from qzwhatnext.models.scheduled_block import EntityType, ScheduledBy
 
 T = TypeVar('T')
 
@@ -52,6 +53,9 @@ class TaskDB(Base):
     
     # Primary key
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    
+    # User association
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     
     # Source metadata
     source_type = Column(String, nullable=False, index=True)
@@ -115,6 +119,7 @@ class TaskDB(Base):
         
         return Task(
             id=self.id,
+            user_id=self.user_id,
             source_type=self.source_type,
             source_id=self.source_id,
             title=self.title,
@@ -152,6 +157,7 @@ class TaskDB(Base):
         
         return cls(
             id=task.id,
+            user_id=task.user_id,
             source_type=task.source_type,
             source_id=task.source_id,
             title=task.title,
@@ -173,4 +179,121 @@ class TaskDB(Base):
             user_locked=task.user_locked,
             manually_scheduled=task.manually_scheduled,
         )
+
+
+class UserDB(Base):
+    """Database model for User."""
+    
+    __tablename__ = "users"
+    
+    # Primary key (Google user ID)
+    id = Column(String, primary_key=True)
+    
+    # User profile
+    email = Column(String, nullable=False, unique=True)
+    name = Column(String, nullable=True)
+    
+    # Timestamps
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    def to_pydantic(self):
+        """Convert database model to Pydantic model."""
+        from qzwhatnext.models.user import User
+        return User(
+            id=self.id,
+            email=self.email,
+            name=self.name,
+            created_at=self.created_at,
+            updated_at=self.updated_at,
+        )
+    
+    @classmethod
+    def from_pydantic(cls, user):
+        """Create database model from Pydantic model."""
+        return cls(
+            id=user.id,
+            email=user.email,
+            name=user.name,
+            created_at=user.created_at,
+            updated_at=user.updated_at,
+        )
+
+
+class ScheduledBlockDB(Base):
+    """Database model for ScheduledBlock."""
+    
+    __tablename__ = "scheduled_blocks"
+    
+    # Primary key
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    
+    # User association
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    
+    # Block details
+    entity_type = Column(String, nullable=False)
+    entity_id = Column(String, nullable=False)
+    start_time = Column(DateTime, nullable=False)
+    end_time = Column(DateTime, nullable=False)
+    scheduled_by = Column(String, nullable=False)
+    locked = Column(Boolean, nullable=False, default=False)
+    calendar_event_id = Column(String, nullable=True)
+    
+    # Timestamps
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    
+    def to_pydantic(self):
+        """Convert database model to Pydantic model."""
+        from qzwhatnext.models.scheduled_block import ScheduledBlock, EntityType, ScheduledBy
+        return ScheduledBlock(
+            id=self.id,
+            user_id=self.user_id,
+            entity_type=value_to_enum(self.entity_type, EntityType, EntityType.TASK),
+            entity_id=self.entity_id,
+            start_time=self.start_time,
+            end_time=self.end_time,
+            scheduled_by=value_to_enum(self.scheduled_by, ScheduledBy, ScheduledBy.SYSTEM),
+            locked=self.locked,
+            calendar_event_id=self.calendar_event_id,
+        )
+    
+    @classmethod
+    def from_pydantic(cls, block):
+        """Create database model from Pydantic model."""
+        return cls(
+            id=block.id,
+            user_id=block.user_id,
+            entity_type=enum_to_value(block.entity_type),
+            entity_id=block.entity_id,
+            start_time=block.start_time,
+            end_time=block.end_time,
+            scheduled_by=enum_to_value(block.scheduled_by),
+            locked=block.locked,
+            calendar_event_id=block.calendar_event_id,
+        )
+
+
+class ApiTokenDB(Base):
+    """Long-lived API tokens for automation (e.g., iOS Shortcuts).
+
+    We store only a hash of the token, never the raw token.
+    """
+
+    __tablename__ = "api_tokens"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    # HMAC-SHA256 hex digest of the token
+    token_hash = Column(String, nullable=False, unique=True, index=True)
+
+    # Non-sensitive prefix for UI/debug (first few chars of raw token)
+    token_prefix = Column(String, nullable=False, default="")
+
+    name = Column(String, nullable=False, default="shortcut")
+
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    last_used_at = Column(DateTime, nullable=True)
+    revoked_at = Column(DateTime, nullable=True)
 

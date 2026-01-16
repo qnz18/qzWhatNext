@@ -1,6 +1,7 @@
 """FastAPI web application for qzWhatNext."""
 
 import logging
+import os
 import uuid
 from datetime import datetime
 from typing import List, Optional, Dict
@@ -8,11 +9,13 @@ from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel, Field, field_validator
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from qzwhatnext.models.task import Task, TaskStatus, TaskCategory, EnergyIntensity
 from qzwhatnext.models.scheduled_block import ScheduledBlock
 from qzwhatnext.models.task_factory import create_task_base, determine_ai_exclusion
+from qzwhatnext.api.auth_models import GoogleOAuthCallbackRequest, AuthResponse
 from qzwhatnext.integrations.google_calendar import GoogleCalendarClient
 from qzwhatnext.integrations.google_sheets import GoogleSheetsClient
 from qzwhatnext.engine.ranking import stack_rank
@@ -20,6 +23,14 @@ from qzwhatnext.engine.scheduler import schedule_tasks, SchedulingResult
 from qzwhatnext.engine.inference import infer_category, generate_title, estimate_duration
 from qzwhatnext.database.database import get_db, init_db
 from qzwhatnext.database.repository import TaskRepository
+from qzwhatnext.database.user_repository import UserRepository
+from qzwhatnext.database.scheduled_block_repository import ScheduledBlockRepository
+from qzwhatnext.database.models import ApiTokenDB
+from qzwhatnext.auth.jwt import create_access_token
+from qzwhatnext.auth.google_oauth import verify_google_token
+from qzwhatnext.auth.dependencies import get_current_user
+from qzwhatnext.auth.shortcut_tokens import generate_shortcut_token, hash_shortcut_token
+from qzwhatnext.models.user import User
 
 # Initialize logger
 logger = logging.getLogger(__name__)
@@ -74,8 +85,7 @@ async def startup_event():
         )
     init_db()
 
-# In-memory schedule storage (schedule is not persisted)
-schedule_store: Optional[SchedulingResult] = None
+# Note: Schedule is now persisted in database via ScheduledBlockRepository
 
 
 # Request/Response models
@@ -184,6 +194,21 @@ class SyncResponse(BaseModel):
     event_ids: List[str]
 
 
+class ShortcutTokenStatusResponse(BaseModel):
+    """Response for shortcut token status."""
+    active: bool
+    token_prefix: Optional[str] = None
+    created_at: Optional[datetime] = None
+    last_used_at: Optional[datetime] = None
+
+
+class ShortcutTokenCreateResponse(BaseModel):
+    """Response for creating a new shortcut token (token returned once)."""
+    token: str
+    token_prefix: str
+    created_at: datetime
+
+
 @app.get("/", response_class=HTMLResponse)
 async def root():
     """Root endpoint with basic UI."""
@@ -192,6 +217,7 @@ async def root():
     <html>
     <head>
         <title>qzWhatNext</title>
+        <script src="https://accounts.google.com/gsi/client" async defer></script>
         <style>
             body { font-family: Arial, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; }
             button { padding: 10px 20px; margin: 5px; cursor: pointer; }
@@ -204,12 +230,36 @@ async def root():
             input, textarea, select { width: 100%; padding: 8px; margin: 5px 0; box-sizing: border-box; }
             label { display: block; margin-top: 10px; font-weight: bold; }
             .form-group { margin: 10px 0; }
+            .muted { color: #666; font-size: 0.9em; }
+            .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
         </style>
     </head>
     <body>
         <h1>qzWhatNext</h1>
         <p>Continuously tells you what you should be doing right now and immediately next.</p>
+
+        <div class="section">
+            <h2>Sign in</h2>
+            <div class="row">
+                <div id="gsi-button"></div>
+                <button onclick="signOut()">Sign out</button>
+            </div>
+            <div id="authStatus" class="muted"></div>
+            <div id="userInfo" class="muted"></div>
+        </div>
         
+        <div class="section">
+            <h2>iOS Shortcut Token</h2>
+            <p class="muted">Generate a long-lived token for iOS Shortcuts. Keep it secret. You can revoke it anytime.</p>
+            <div class="row">
+                <button onclick="createShortcutToken()">Create / Rotate Token</button>
+                <button onclick="revokeShortcutToken()">Revoke Token</button>
+                <button onclick="loadShortcutTokenStatus()">Refresh Status</button>
+            </div>
+            <div id="shortcutTokenStatus" class="muted"></div>
+            <pre id="shortcutTokenValue" style="white-space: pre-wrap;"></pre>
+        </div>
+
         <div class="section">
             <h2>Actions</h2>
             <button onclick="buildSchedule()">Build Schedule</button>
@@ -288,6 +338,171 @@ async def root():
         </div>
         
         <script>
+            const ACCESS_TOKEN_KEY = "qz_access_token";
+
+            function getAccessToken() {
+                return localStorage.getItem(ACCESS_TOKEN_KEY);
+            }
+
+            function setAccessToken(token) {
+                if (token) {
+                    localStorage.setItem(ACCESS_TOKEN_KEY, token);
+                } else {
+                    localStorage.removeItem(ACCESS_TOKEN_KEY);
+                }
+            }
+
+            function setAuthStatus(message) {
+                const el = document.getElementById('authStatus');
+                if (el) el.textContent = message || '';
+            }
+
+            function setUserInfo(message) {
+                const el = document.getElementById('userInfo');
+                if (el) el.textContent = message || '';
+            }
+
+            async function apiFetch(path, options = {}) {
+                const token = getAccessToken();
+                const headers = Object.assign({}, options.headers || {});
+                if (token) {
+                    headers['Authorization'] = `Bearer ${token}`;
+                }
+                const response = await fetch(path, Object.assign({}, options, { headers }));
+                if (response.status === 401 || response.status === 403) {
+                    throw new Error("Not signed in (401/403). Use the Sign in button above.");
+                }
+                return response;
+            }
+
+            async function refreshMe() {
+                try {
+                    const response = await apiFetch('/auth/me');
+                    const data = await response.json();
+                    const u = data.user || data;
+                    if (u && u.email) {
+                        setUserInfo(`Signed in as ${u.email}`);
+                    } else {
+                        setUserInfo('Signed in.');
+                    }
+                } catch (e) {
+                    setUserInfo('');
+                }
+            }
+
+            async function loadAuthConfig() {
+                const res = await fetch('/auth/config');
+                if (!res.ok) return null;
+                return await res.json();
+            }
+
+            async function handleGoogleCredentialResponse(response) {
+                try {
+                    setAuthStatus('Signing in...');
+                    const idToken = response && response.credential;
+                    if (!idToken) {
+                        throw new Error('No Google ID token received.');
+                    }
+
+                    const res = await fetch('/auth/google/callback', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ id_token: idToken })
+                    });
+
+                    if (!res.ok) {
+                        const err = await res.json().catch(() => ({}));
+                        throw new Error(err.detail || 'Failed to authenticate');
+                    }
+
+                    const data = await res.json();
+                    setAccessToken(data.access_token);
+                    setAuthStatus('Signed in.');
+                    await refreshMe();
+                    await viewTasks();
+                } catch (e) {
+                    console.error('Auth error:', e);
+                    setAuthStatus('Auth error: ' + (e && e.message ? e.message : String(e)));
+                }
+            }
+
+            async function initGoogleSignIn() {
+                const cfg = await loadAuthConfig();
+                const clientId = cfg && cfg.google_oauth_client_id;
+                if (!clientId) {
+                    setAuthStatus('Missing GOOGLE_OAUTH_CLIENT_ID on the server. Set it in your .env and restart.');
+                    return;
+                }
+                if (!window.google || !google.accounts || !google.accounts.id) {
+                    setAuthStatus('Google sign-in library not loaded yet. Refresh in a second.');
+                    return;
+                }
+                google.accounts.id.initialize({
+                    client_id: clientId,
+                    callback: handleGoogleCredentialResponse
+                });
+                google.accounts.id.renderButton(
+                    document.getElementById("gsi-button"),
+                    { theme: "outline", size: "large" }
+                );
+                google.accounts.id.prompt();
+                setAuthStatus(getAccessToken() ? 'Signed in (token present).' : 'Not signed in.');
+                await refreshMe();
+            }
+
+            function signOut() {
+                setAccessToken(null);
+                setAuthStatus('Signed out.');
+                setUserInfo('');
+                document.getElementById('tasks').innerHTML = '<p>Signed out. Sign in to load tasks.</p>';
+                document.getElementById('schedule').innerHTML = '';
+            }
+
+            async function loadShortcutTokenStatus() {
+                const el = document.getElementById('shortcutTokenStatus');
+                const val = document.getElementById('shortcutTokenValue');
+                val.textContent = '';
+                try {
+                    const res = await apiFetch('/auth/shortcut-token');
+                    const data = await res.json();
+                    if (!data.active) {
+                        el.textContent = 'No active shortcut token.';
+                        return;
+                    }
+                    el.textContent = `Active token prefix: ${data.token_prefix || ''} (created ${data.created_at || ''})`;
+                } catch (e) {
+                    el.textContent = 'Error: ' + (e && e.message ? e.message : String(e));
+                }
+            }
+
+            async function createShortcutToken() {
+                const el = document.getElementById('shortcutTokenStatus');
+                const val = document.getElementById('shortcutTokenValue');
+                val.textContent = '';
+                try {
+                    el.textContent = 'Creating token...';
+                    const res = await apiFetch('/auth/shortcut-token', { method: 'POST' });
+                    const data = await res.json();
+                    el.textContent = `Created token prefix: ${data.token_prefix}. Copy the token below (shown once).`;
+                    val.textContent = data.token;
+                } catch (e) {
+                    el.textContent = 'Error: ' + (e && e.message ? e.message : String(e));
+                }
+            }
+
+            async function revokeShortcutToken() {
+                const el = document.getElementById('shortcutTokenStatus');
+                const val = document.getElementById('shortcutTokenValue');
+                val.textContent = '';
+                try {
+                    el.textContent = 'Revoking token...';
+                    await apiFetch('/auth/shortcut-token', { method: 'DELETE' });
+                    el.textContent = 'Token revoked.';
+                } catch (e) {
+                    el.textContent = 'Error: ' + (e && e.message ? e.message : String(e));
+                }
+            }
+
             async function createTask(event) {
                 event.preventDefault();
                 const status = document.getElementById('status');
@@ -301,7 +516,7 @@ async def root():
                 };
                 
                 try {
-                    const response = await fetch('/tasks', {
+                    const response = await apiFetch('/tasks', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(taskData)
@@ -315,7 +530,7 @@ async def root():
                     const data = await response.json();
                     status.innerHTML = `Task created: "${data.task.title}"`;
                     document.getElementById('createTaskForm').reset();
-                    viewTasks();
+                    await viewTasks();
                 } catch (error) {
                     status.innerHTML = 'Error: ' + error.message;
                 }
@@ -335,7 +550,7 @@ async def root():
                 try {
                     // Use full URL to avoid any origin issues
                     const apiUrl = window.location.origin + '/import/sheets';
-                    const response = await fetch(apiUrl, {
+                    const response = await apiFetch(apiUrl, {
                         method: 'POST',
                         headers: { 
                             'Content-Type': 'application/json',
@@ -354,7 +569,7 @@ async def root():
                     const data = await response.json();
                     status.innerHTML = `Imported ${data.imported_count} tasks${data.duplicates_detected > 0 ? ` (${data.duplicates_detected} duplicates detected)` : ''}`;
                     document.getElementById('importSheetsForm').reset();
-                    viewTasks();
+                    await viewTasks();
                 } catch (error) {
                     console.error('Import error:', error);
                     status.innerHTML = 'Error: ' + error.message + '. Check server console for details.';
@@ -365,10 +580,10 @@ async def root():
                 const status = document.getElementById('status');
                 status.innerHTML = 'Building schedule...';
                 try {
-                    const response = await fetch('/schedule', { method: 'POST' });
+                    const response = await apiFetch('/schedule', { method: 'POST' });
                     const data = await response.json();
                     status.innerHTML = `Schedule built: ${data.scheduled_blocks.length} blocks, ${data.overflow_tasks.length} overflow`;
-                    viewSchedule();
+                    await viewSchedule();
                 } catch (error) {
                     status.innerHTML = 'Error: ' + error.message;
                 }
@@ -378,7 +593,7 @@ async def root():
                 const status = document.getElementById('status');
                 status.innerHTML = 'Syncing to Google Calendar...';
                 try {
-                    const response = await fetch('/sync-calendar', { method: 'POST' });
+                    const response = await apiFetch('/sync-calendar', { method: 'POST' });
                     const data = await response.json();
                     status.innerHTML = `Synced ${data.events_created} events to Google Calendar`;
                 } catch (error) {
@@ -389,7 +604,7 @@ async def root():
             async function viewTasks() {
                 const tasksDiv = document.getElementById('tasks');
                 try {
-                    const response = await fetch('/tasks');
+                    const response = await apiFetch('/tasks');
                     const data = await response.json();
                     
                     if (data.tasks.length === 0) {
@@ -420,7 +635,7 @@ async def root():
             async function viewSchedule() {
                 const scheduleDiv = document.getElementById('schedule');
                 try {
-                    const response = await fetch('/schedule');
+                    const response = await apiFetch('/schedule');
                     const data = await response.json();
                     
                     if (data.scheduled_blocks.length === 0) {
@@ -462,7 +677,13 @@ async def root():
             
             // Load tasks on page load
             window.onload = function() {
-                viewTasks();
+                initGoogleSignIn();
+                if (getAccessToken()) {
+                    viewTasks();
+                    loadShortcutTokenStatus();
+                } else {
+                    document.getElementById('tasks').innerHTML = '<p>Sign in to load tasks.</p>';
+                }
             };
         </script>
     </body>
@@ -482,15 +703,166 @@ async def favicon():
     return Response(status_code=204)  # No Content
 
 
+# Frontend config (safe to expose)
+@app.get("/auth/config")
+async def auth_config():
+    """Return public auth configuration needed by the browser UI."""
+    return {"google_oauth_client_id": os.getenv("GOOGLE_OAUTH_CLIENT_ID", "")}
+
+
+# Authentication endpoints
+@app.post("/auth/google/callback", response_model=AuthResponse)
+async def google_oauth_callback(
+    request: GoogleOAuthCallbackRequest,
+    db: Session = Depends(get_db)
+):
+    """Handle Google OAuth callback and create/login user.
+    
+    Expected request body:
+    {
+        "id_token": "Google ID token from OAuth flow"
+    }
+    
+    Returns JWT token for authenticated user.
+    """
+    # Verify Google token and get user info
+    user_info = verify_google_token(request.id_token)
+    if not user_info:
+        raise HTTPException(status_code=401, detail="Invalid Google token")
+    
+    if not user_info.get('email'):
+        raise HTTPException(status_code=400, detail="Email is required")
+    
+    # Create or update user in database
+    user_repo = UserRepository(db)
+    now = datetime.utcnow()
+    user = User(
+        id=user_info['id'],
+        email=user_info['email'],
+        name=user_info.get('name'),
+        created_at=now,
+        updated_at=now,
+    )
+    
+    try:
+        user = user_repo.create_or_update(user)
+    except Exception as e:
+        logger.error(f"Failed to create/update user: {type(e).__name__}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to create/update user")
+
+    # Legacy DB compatibility: if tasks were created before multi-user support,
+    # they may have NULL user_id. Claim unowned tasks for this user so they
+    # remain visible after login.
+    try:
+        db.execute(
+            text("UPDATE tasks SET user_id = :uid WHERE user_id IS NULL OR user_id = ''"),
+            {"uid": user.id},
+        )
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.warning(f"Failed to claim legacy tasks for user {user.id}: {type(e).__name__}: {str(e)}")
+    
+    # Generate JWT token
+    token = create_access_token(user.id)
+    
+    return AuthResponse(
+        access_token=token,
+        token_type="bearer",
+        user=user.model_dump()
+    )
+
+
+@app.get("/auth/me")
+async def get_current_user_info(current_user: User = Depends(get_current_user)):
+    """Get current authenticated user information."""
+    return {"user": current_user.model_dump()}
+
+
+@app.get("/auth/shortcut-token", response_model=ShortcutTokenStatusResponse)
+async def get_shortcut_token_status(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get shortcut token status for the current user (does not reveal the token)."""
+    token_db = (
+        db.query(ApiTokenDB)
+        .filter(ApiTokenDB.user_id == current_user.id, ApiTokenDB.revoked_at.is_(None))
+        .order_by(ApiTokenDB.created_at.desc())
+        .first()
+    )
+    if not token_db:
+        return ShortcutTokenStatusResponse(active=False)
+    return ShortcutTokenStatusResponse(
+        active=True,
+        token_prefix=token_db.token_prefix,
+        created_at=token_db.created_at,
+        last_used_at=token_db.last_used_at,
+    )
+
+
+@app.post("/auth/shortcut-token", response_model=ShortcutTokenCreateResponse)
+async def create_shortcut_token(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Create (or rotate) a shortcut token for the current user.
+
+    The raw token is returned ONCE. Store it in your iOS Shortcut.
+    """
+    # Revoke any existing active tokens for this user (single active token policy).
+    now = datetime.utcnow()
+    db.query(ApiTokenDB).filter(
+        ApiTokenDB.user_id == current_user.id,
+        ApiTokenDB.revoked_at.is_(None),
+    ).update({"revoked_at": now})
+    db.commit()
+
+    token = generate_shortcut_token()
+    token_prefix = token[:6]
+    token_hash = hash_shortcut_token(token)
+
+    token_db = ApiTokenDB(
+        user_id=current_user.id,
+        token_hash=token_hash,
+        token_prefix=token_prefix,
+        name="ios_shortcut",
+        created_at=now,
+    )
+    db.add(token_db)
+    db.commit()
+
+    return ShortcutTokenCreateResponse(token=token, token_prefix=token_prefix, created_at=now)
+
+
+@app.delete("/auth/shortcut-token", status_code=204)
+async def revoke_shortcut_token(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Revoke the current user's active shortcut token(s)."""
+    now = datetime.utcnow()
+    db.query(ApiTokenDB).filter(
+        ApiTokenDB.user_id == current_user.id,
+        ApiTokenDB.revoked_at.is_(None),
+    ).update({"revoked_at": now})
+    db.commit()
+    return Response(status_code=204)
+
+
 # Task CRUD endpoints
 @app.post("/tasks", response_model=TaskResponse, status_code=201)
-async def create_task(request: TaskCreateRequest, db: Session = Depends(get_db)):
+async def create_task(
+    request: TaskCreateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     """Create a new task."""
     repo = TaskRepository(db)
     
     # Check for duplicates if source_id is provided
     if request.source_id:
-        duplicates = repo.find_duplicates(request.source_type, request.source_id, request.title)
+        duplicates = repo.find_duplicates(current_user.id, request.source_type, request.source_id, request.title)
         if duplicates:
             # For MVP, we just log but still create (no auto-dedupe)
             logger.warning(
@@ -501,6 +873,7 @@ async def create_task(request: TaskCreateRequest, db: Session = Depends(get_db))
     
     # Create task using factory (applies defaults from constants)
     task = create_task_base(
+        user_id=current_user.id,
         source_type=request.source_type,
         source_id=request.source_id,
         title=request.title,
@@ -520,7 +893,11 @@ async def create_task(request: TaskCreateRequest, db: Session = Depends(get_db))
 
 
 @app.post("/tasks/add_smart", response_model=TaskResponse, status_code=201)
-async def add_smart_task(request: TaskAddSmartRequest, db: Session = Depends(get_db)):
+async def add_smart_task(
+    request: TaskAddSmartRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     """Create a new task from iOS Shortcut with auto-generated title and category.
     
     This endpoint is designed for iOS Shortcuts integration. It accepts only
@@ -545,6 +922,7 @@ async def add_smart_task(request: TaskAddSmartRequest, db: Session = Depends(get
         # Create temporary task object for inference (minimal fields needed)
         # Use factory but override title to empty string to avoid AI exclusion check
         temp_task = create_task_base(
+            user_id=current_user.id,
             source_type="api",
             source_id=None,
             title="",  # Empty title won't trigger AI exclusion check
@@ -575,6 +953,7 @@ async def add_smart_task(request: TaskAddSmartRequest, db: Session = Depends(get
     
     # Create task with generated/fallback title using factory
     task = create_task_base(
+        user_id=current_user.id,
         source_type="api",
         source_id=None,
         title=task_title,
@@ -623,11 +1002,14 @@ async def add_smart_task(request: TaskAddSmartRequest, db: Session = Depends(get
 
 
 @app.get("/tasks", response_model=TaskListResponse)
-async def list_tasks(db: Session = Depends(get_db)):
-    """List all tasks."""
+async def list_tasks(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """List all tasks for current user."""
     repo = TaskRepository(db)
     try:
-        tasks = repo.get_all()
+        tasks = repo.get_all(current_user.id)
         return TaskListResponse(tasks=tasks, count=len(tasks))
     except Exception as e:
         logger.error(f"Failed to list tasks: {type(e).__name__}: {str(e)}")
@@ -635,20 +1017,29 @@ async def list_tasks(db: Session = Depends(get_db)):
 
 
 @app.get("/tasks/{task_id}", response_model=TaskResponse)
-async def get_task(task_id: str, db: Session = Depends(get_db)):
+async def get_task(
+    task_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     """Get a task by ID."""
     repo = TaskRepository(db)
-    task = repo.get(task_id)
+    task = repo.get(current_user.id, task_id)
     if not task:
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
     return TaskResponse(task=task)
 
 
 @app.put("/tasks/{task_id}", response_model=TaskResponse)
-async def update_task(task_id: str, request: TaskUpdateRequest, db: Session = Depends(get_db)):
+async def update_task(
+    task_id: str,
+    request: TaskUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     """Update a task."""
     repo = TaskRepository(db)
-    task = repo.get(task_id)
+    task = repo.get(current_user.id, task_id)
     if not task:
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
     
@@ -689,10 +1080,14 @@ async def update_task(task_id: str, request: TaskUpdateRequest, db: Session = De
 
 
 @app.delete("/tasks/{task_id}", status_code=204)
-async def delete_task(task_id: str, db: Session = Depends(get_db)):
+async def delete_task(
+    task_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     """Delete a task."""
     repo = TaskRepository(db)
-    success = repo.delete(task_id)
+    success = repo.delete(current_user.id, task_id)
     if not success:
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
     return None
@@ -700,7 +1095,11 @@ async def delete_task(task_id: str, db: Session = Depends(get_db)):
 
 # Google Sheets import endpoint
 @app.post("/import/sheets", response_model=ImportSheetsResponse)
-async def import_from_sheets(request: ImportSheetsRequest, db: Session = Depends(get_db)):
+async def import_from_sheets(
+    request: ImportSheetsRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     """Import tasks from Google Sheets.
     
     Note: On first use, this will open a browser window for OAuth authentication.
@@ -715,6 +1114,7 @@ async def import_from_sheets(request: ImportSheetsRequest, db: Session = Depends
         # Check the server console/terminal for authentication status messages.
         sheets_client = GoogleSheetsClient()
         imported_tasks = sheets_client.import_tasks(
+            user_id=current_user.id,
             spreadsheet_id=request.spreadsheet_id,
             range_name=request.range_name,
             has_header=request.has_header
@@ -726,7 +1126,7 @@ async def import_from_sheets(request: ImportSheetsRequest, db: Session = Depends
         
         for task in imported_tasks:
             # Check for duplicates
-            duplicates = repo.find_duplicates(task.source_type, task.source_id, task.title)
+            duplicates = repo.find_duplicates(current_user.id, task.source_type, task.source_id, task.title)
             if duplicates:
                 duplicates_count += 1
                 # For MVP: notify user but still import (no auto-dedupe)
@@ -772,12 +1172,15 @@ async def import_from_sheets(request: ImportSheetsRequest, db: Session = Depends
 
 
 @app.post("/schedule", response_model=ScheduleResponse)
-async def build_schedule(db: Session = Depends(get_db)):
+async def build_schedule(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     """Build schedule from tasks in database."""
-    global schedule_store
+    task_repo = TaskRepository(db)
+    schedule_repo = ScheduledBlockRepository(db)
     
-    repo = TaskRepository(db)
-    tasks = repo.get_open()
+    tasks = task_repo.get_open(current_user.id)
     
     if not tasks:
         raise HTTPException(status_code=400, detail="No tasks available. Create tasks first.")
@@ -786,11 +1189,12 @@ async def build_schedule(db: Session = Depends(get_db)):
         # Stack rank tasks
         ranked_tasks = stack_rank(tasks)
         
-        # Schedule tasks
+        # Schedule tasks (blocks will have user_id from task.user_id)
         schedule_result = schedule_tasks(ranked_tasks)
         
-        # Store schedule (in-memory for now)
-        schedule_store = schedule_result
+        # Store schedule in database (delete old, insert new)
+        schedule_repo.delete_all_for_user(current_user.id)
+        schedule_repo.create_batch(schedule_result.scheduled_blocks)
         
         # Build task titles map for frontend lookup
         task_titles = _build_task_titles_dict(tasks, schedule_result.scheduled_blocks)
@@ -807,50 +1211,77 @@ async def build_schedule(db: Session = Depends(get_db)):
 
 
 @app.get("/schedule", response_model=ScheduleResponse)
-async def view_schedule(db: Session = Depends(get_db)):
-    """View current schedule."""
-    if schedule_store is None:
+async def view_schedule(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """View current schedule for user."""
+    schedule_repo = ScheduledBlockRepository(db)
+    task_repo = TaskRepository(db)
+    
+    blocks = schedule_repo.get_all(current_user.id)
+    
+    if not blocks:
         raise HTTPException(status_code=404, detail="No schedule available. Build a schedule first.")
     
-    # Build task titles map for frontend lookup
-    repo = TaskRepository(db)
-    tasks = repo.get_all()
-    task_titles = _build_task_titles_dict(tasks, schedule_store.scheduled_blocks)
+    tasks = task_repo.get_all(current_user.id)
+    task_titles = _build_task_titles_dict(tasks, blocks)
     
+    # For MVP, overflow_tasks and start_time are not stored in DB
+    # Return empty overflow and None start_time
     return ScheduleResponse(
-        scheduled_blocks=schedule_store.scheduled_blocks,
-        overflow_tasks=schedule_store.overflow_tasks,
-        start_time=schedule_store.start_time,
+        scheduled_blocks=blocks,
+        overflow_tasks=[],
+        start_time=None,
         task_titles=task_titles
     )
 
 
 @app.post("/sync-calendar", response_model=SyncResponse)
-async def sync_calendar(db: Session = Depends(get_db)):
+async def sync_calendar(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     """Sync schedule to Google Calendar."""
-    global schedule_store
+    schedule_repo = ScheduledBlockRepository(db)
+    task_repo = TaskRepository(db)
     
-    if schedule_store is None:
+    blocks = schedule_repo.get_all(current_user.id)
+    
+    if not blocks:
         raise HTTPException(status_code=400, detail="No schedule available. Build a schedule first.")
     
     try:
-        # Create Google Calendar client
         calendar_client = GoogleCalendarClient()
-        
-        # Get tasks from database
-        repo = TaskRepository(db)
-        tasks = repo.get_all()
+        tasks = task_repo.get_all(current_user.id)
         tasks_dict = {task.id: task for task in tasks}
         
-        # Create events from scheduled blocks
-        events = calendar_client.create_events_from_blocks(
-            schedule_store.scheduled_blocks,
-            tasks_dict
-        )
+        events_created = 0
+        event_ids = []
+        
+        for block in blocks:
+            if block.entity_type == "task":
+                task = tasks_dict.get(block.entity_id)
+                try:
+                    event = calendar_client.create_event_from_block(block, task)
+                    events_created += 1
+                    event_id = event.get('id', 'unknown')
+                    event_ids.append(event_id)
+                    
+                    # Note: In MVP, we don't persist calendar_event_id updates
+                    # This would require update method in ScheduledBlockRepository
+                except Exception as e:
+                    logger.error(f"Failed to create calendar event for block {block.id}: {type(e).__name__}: {str(e)}")
+                    continue
         
         return SyncResponse(
-            events_created=len(events),
-            event_ids=[event['id'] for event in events]
+            events_created=events_created,
+            event_ids=event_ids
+        )
+    except FileNotFoundError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Google Calendar credentials not found. {str(e)}"
         )
     except Exception as e:
         logger.error(f"Failed to sync calendar: {type(e).__name__}: {str(e)}")

@@ -82,6 +82,7 @@ def schedule_tasks(
             
             block = ScheduledBlock(
                 id=str(uuid.uuid4()),
+                user_id=task.user_id,
                 entity_type=EntityType.TASK,
                 entity_id=task.id,
                 start_time=task_start,

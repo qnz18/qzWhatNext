@@ -25,3 +25,4 @@ MIN_DURATION_MIN = 5  # 5 minutes minimum
 MAX_DURATION_MIN = 600  # 600 minutes (10 hours) maximum
 DURATION_ROUNDING = 15  # Round to nearest 15 minutes
 
+

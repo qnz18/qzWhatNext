@@ -21,11 +21,17 @@ TEST_DATABASE_URL = "sqlite:///:memory:"
 
 
 @pytest.fixture(scope="function")
-def db_session():
+def db_session(test_user_id):
     """Create a database session for testing.
     
     Uses an in-memory SQLite database that is created fresh for each test.
+    Also creates a test user in the database.
     """
+    from sqlalchemy import event
+    from sqlalchemy.engine import Engine
+    from qzwhatnext.database.models import UserDB
+    from datetime import datetime
+    
     # Create engine with StaticPool for in-memory database
     engine = create_engine(
         TEST_DATABASE_URL,
@@ -34,12 +40,32 @@ def db_session():
         echo=False
     )
     
+    # Enable SQLite foreign keys and WAL mode
+    @event.listens_for(Engine, "connect")
+    def set_sqlite_pragmas(dbapi_conn, connection_record):
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.close()
+    
     # Create all tables
     Base.metadata.create_all(bind=engine)
     
     # Create session
     TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     session = TestingSessionLocal()
+    
+    # Create test user (required for foreign key constraints)
+    now = datetime.utcnow()
+    test_user_db = UserDB(
+        id=test_user_id,
+        email="test@example.com",
+        name="Test User",
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(test_user_db)
+    session.commit()
     
     try:
         yield session
@@ -55,7 +81,13 @@ def task_repository(db_session: Session):
 
 
 @pytest.fixture
-def sample_task_base():
+def test_user_id():
+    """Test user ID for multi-user testing."""
+    return "test-user-123"
+
+
+@pytest.fixture
+def sample_task_base(test_user_id):
     """Base task data for creating test tasks.
     
     Returns a dict with default task attributes that can be overridden.
@@ -63,6 +95,7 @@ def sample_task_base():
     now = datetime.utcnow()
     return {
         "id": str(uuid.uuid4()),
+        "user_id": test_user_id,
         "source_type": "api",
         "source_id": None,
         "title": "Test Task",
@@ -160,10 +193,26 @@ def user_locked_task(sample_task_base):
 
 
 @pytest.fixture
-def test_client(db_session: Session):
-    """Create a FastAPI test client with overridden database dependency."""
+def test_user(test_user_id):
+    """Create a test user object."""
+    from qzwhatnext.models.user import User
+    from datetime import datetime
+    now = datetime.utcnow()
+    return User(
+        id=test_user_id,
+        email="test@example.com",
+        name="Test User",
+        created_at=now,
+        updated_at=now,
+    )
+
+
+@pytest.fixture
+def test_client(db_session: Session, test_user):
+    """Create a FastAPI test client with overridden database dependency and authentication."""
     from qzwhatnext.api.app import app
     from qzwhatnext.database.database import get_db
+    from qzwhatnext.auth.dependencies import get_current_user
     
     # Override the get_db dependency to use our test database session
     def override_get_db():
@@ -172,11 +221,16 @@ def test_client(db_session: Session):
         finally:
             pass  # Don't close the session here, let the fixture handle it
     
+    # Override authentication to return test user
+    def override_get_current_user():
+        return test_user
+    
     app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_current_user] = override_get_current_user
     
     with TestClient(app) as client:
         yield client
     
-    # Clean up dependency override
+    # Clean up dependency overrides
     app.dependency_overrides.clear()
 

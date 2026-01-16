@@ -57,6 +57,7 @@ def create_task_defaults() -> Dict[str, Any]:
 
 
 def create_task_base(
+    user_id: str,
     source_type: str,
     source_id: Optional[str],
     title: str,
@@ -81,6 +82,7 @@ def create_task_base(
     from constants. All optional parameters override defaults when provided.
     
     Args:
+        user_id: User ID who owns this task (required)
         source_type: Source system type (e.g., 'api', 'google_sheets')
         source_id: External ID in source system (None for API-created tasks)
         title: Task title (required)
@@ -112,6 +114,7 @@ def create_task_base(
     # Apply defaults, allowing overrides
     task = Task(
         id=str(uuid.uuid4()),
+        user_id=user_id,
         source_type=source_type,
         source_id=source_id,
         title=title,
