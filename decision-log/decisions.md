@@ -1,7 +1,7 @@
 # qzWhatNext – Decision Log
 
-Version: 0.1.0  
-Last Updated: 2025-01-10  
+Version: 0.1.1  
+Last Updated: 2026-01-17  
 Status: Locked (MVP decisions)
 
 This log records all non-obvious product and engine decisions that govern qzWhatNext.
@@ -376,6 +376,56 @@ Calendar visualization provides familiar, time-bound context that users already 
 - Calendar events are created/updated/deleted by the system
 - User can view schedule in their preferred calendar application
 - Architecture must support multiple calendar backends (MVP: Google Calendar only)
+
+**Status:** Locked
+
+---
+
+## D-024 — Multi-User Authentication via Google Sign-In + JWT
+
+**Decision:**  
+MVP authenticates users via Google sign-in (ID token verification) and issues a server-signed JWT for API access.
+
+**Rationale:**  
+Google sign-in provides low-friction identity. Server-issued JWTs provide stateless API auth and enable deterministic user scoping for all data access.
+
+**Implications:**  
+- All task/schedule reads and writes are scoped by authenticated `user_id`
+- JWTs are treated as secrets and are never logged
+
+**Status:** Locked
+
+---
+
+## D-025 — Long-Lived Automation Tokens for iOS Shortcuts
+
+**Decision:**  
+The system supports a long-lived, revocable automation token for clients that cannot refresh JWTs, passed via `X-Shortcut-Token`.
+
+**Rationale:**  
+iOS Shortcuts and similar automation clients need stable authentication without an interactive OAuth flow on each run.
+
+**Implications:**  
+- Store only a hashed token at rest (raw token is shown once)
+- Tokens are revocable/rotatable
+- Requests authenticated with `X-Shortcut-Token` are treated as fully authenticated for that user
+- Never log raw tokens
+
+**Status:** Locked
+
+---
+
+## D-026 — Legacy SQLite Schema Compatibility Patch (MVP)
+
+**Decision:**  
+If a legacy SQLite DB exists that predates multi-user support, the system may apply a minimal deterministic schema patch to add missing columns required by the current runtime schema (e.g., `tasks.user_id`).
+
+**Rationale:**  
+SQLite `create_all()` does not alter existing tables. Without a minimal patch, the app fails at runtime for existing local MVP users.
+
+**Implications:**  
+- Patch must be minimal, deterministic, and reversible by restoring the DB from backup
+- Legacy rows missing `user_id` may be claimed for the first authenticated user (MVP convenience)
 
 **Status:** Locked
 

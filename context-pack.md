@@ -1,7 +1,7 @@
 # qzWhatNext – Canonical Context Pack
 
-Version: 0.1.0  
-Last Updated: 2025-01-10  
+Version: 0.1.1  
+Last Updated: 2026-01-17  
 Status: Locked (MVP)
 
 ---
@@ -45,6 +45,23 @@ These rules apply everywhere in the system.
 - All system actions must be explainable
 - All system actions must be reversible
 - No user data is shared with third parties
+
+---
+
+## 3.1 Multi-User and Authentication (MVP)
+
+qzWhatNext is a multi-user system. All persisted data is user-scoped:
+- Tasks are owned by exactly one user (via `user_id`)
+- Scheduled blocks are owned by exactly one user (via `user_id`)
+- All reads/writes must be filtered by the authenticated user
+
+**Authentication (MVP):**
+- Primary: Google sign-in → server verifies Google ID token → server issues JWT
+- Automation clients (e.g., iOS Shortcuts): long-lived per-user token via `X-Shortcut-Token`
+
+**Security properties:**
+- JWTs are short-lived and are used for browser/API sessions
+- Shortcut tokens are long-lived and must be revocable; store only hashed tokens at rest
 
 ---
 
@@ -221,9 +238,13 @@ Percentage completion is explicitly excluded.
 Included:
 - Task import (Google Sheets, REST API)
 - Database persistence (SQLite)
+- Multi-user authentication and user-scoped data access
+- Google sign-in → JWT for API calls
+- Long-lived automation token for iOS Shortcuts (`X-Shortcut-Token`, revocable)
 - Automatic task identification
 - Continuous stack-ranking
 - Auto-scheduling (using base task durations)
+- Schedule persistence (scheduled blocks persisted, not in-memory)
 - Overflow detection and notification
 - Explainable decisions
 - Auto-maintained calendar visualization (Google Calendar)

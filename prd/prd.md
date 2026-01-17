@@ -1,7 +1,7 @@
 # qzWhatNext – Product Requirements Document (PRD)
 
-**Version:** 0.1.0  
-**Last Updated:** 2025-01-XX  
+**Version:** 0.1.1  
+**Last Updated:** 2026-01-17  
 **Status:** MVP Locked  
 **Primary Characteristic:** Continually builds user trust
 
@@ -79,9 +79,13 @@ Existing tools can store tasks and events, but they do not:
 ### In Scope
 - Task import (Google Sheets, REST API)
 - Database persistence (SQLite)
+- Multi-user authentication (Google sign-in → JWT)
+- User-scoped data isolation (tasks and schedules per user)
+- Long-lived automation token for iOS Shortcuts (`X-Shortcut-Token`, revocable)
 - Automatic task identification and classification
 - Continuous stack-ranking of tasks
 - Auto-scheduling into calendar free time (using base task durations)
+- Schedule persistence (scheduled blocks persisted)
 - Overflow detection and notification
 - One-line explanation for every decision
 - Auto-maintained calendar visualization (Google Calendar)
@@ -114,6 +118,10 @@ Existing tools can store tasks and events, but they do not:
 - All tasks are persisted in database (SQLite for MVP)
 - Database optimized for scheduling and prioritization queries
 - Tasks remain available even if source system is unavailable
+
+**Multi-User Ownership:**
+- All tasks are associated with exactly one `user_id`
+- API reads/writes are scoped to the authenticated user
 
 **Processing:**
 - Normalize tasks into canonical format
@@ -165,6 +173,22 @@ Tasks starting with `.` or explicitly flagged by the user are always excluded fr
 - The system may not move:
   - User-blocked time
   - Manually scheduled events
+
+**Persistence (MVP):**
+- Scheduled output blocks are persisted per user (not stored only in memory)
+
+---
+
+### 7.10 Authentication and Automation (MVP)
+
+**Web/API authentication:**
+- Google sign-in is used to identify the user
+- Server verifies Google ID tokens and issues a JWT
+
+**Automation clients (iOS Shortcuts):**
+- Support long-lived token authentication via `X-Shortcut-Token`
+- Tokens are revocable/rotatable
+- Store only hashed tokens at rest (never store raw token)
 
 ---
 

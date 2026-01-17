@@ -1,7 +1,7 @@
 # qzWhatNext – Scoring & Scheduling Engine Spec (v1)
 
-**Version:** 0.1.0  
-**Last Updated:** 2025-01-10  
+**Version:** 0.1.1  
+**Last Updated:** 2026-01-17  
 **Status:** Buildable MVP Spec  
 **Scope:** Deterministic engine with AI augmentation hooks (non-authoritative)
 
@@ -42,6 +42,7 @@ The engine reasons over one schedulable entity type:
 A Task has the following fields:
 
 - id: string
+- user_id: string (owner user ID; all task reads/writes are user-scoped)
 - source_type: string (e.g. "google_sheets", "api", "todoist") - metadata only, tasks owned by qzWhatNext
 - source_id: string | null (external ID in source system, null for API-created tasks)
 - title: string
@@ -88,6 +89,7 @@ A Task has the following fields:
 A ScheduledBlock represents something placed on the calendar:
 
 - id: string
+- user_id: string (owner user ID; all scheduled block reads/writes are user-scoped)
 - entity_type: task
 - entity_id: string
 - start_time: datetime
@@ -99,6 +101,31 @@ A ScheduledBlock represents something placed on the calendar:
 **Note:** MVP schedules tasks only. Explicit Transition entities are deferred to future releases.
 
 ---
+
+### 2.3 User (MVP)
+
+A User is the owner boundary for all persisted data:
+
+- id: string (Google user ID)
+- email: string
+- name: string | null
+- created_at: datetime
+- updated_at: datetime
+
+---
+
+### 2.5 Automation API Token (MVP)
+
+For automation clients (e.g., iOS Shortcuts) that cannot easily refresh JWTs:
+
+- user_id: string
+- token_hash: string (HMAC-SHA256 hex digest; raw token is never stored)
+- token_prefix: string (non-sensitive prefix shown to the user)
+- created_at: datetime
+- last_used_at: datetime | null
+- revoked_at: datetime | null
+
+Authentication is via `X-Shortcut-Token` header. Tokens must be revocable.
 
 ### 2.4 Audit Event
 
@@ -142,6 +169,7 @@ This rule must be enforced **before any AI call**.
 
 On each rebuild trigger, the engine executes:
 
+0. Resolve user context (all pipeline steps are executed per user)
 1. Ingest and normalize tasks
 2. Enforce AI exclusion rules
 3. Infer attributes (AI hooks + defaults)
