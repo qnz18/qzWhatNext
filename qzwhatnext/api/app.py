@@ -275,6 +275,10 @@ async def root():
         
         <div class="section">
             <h2>Tasks</h2>
+            <div class="row">
+                <button onclick="viewTasks()">Refresh Tasks</button>
+                <span id="tasksUpdated" class="muted"></span>
+            </div>
             <div id="tasks"></div>
         </div>
         
@@ -362,6 +366,18 @@ async def root():
                 if (el) el.textContent = message || '';
             }
 
+            function onAuthFailure(message) {
+                // Token exists locally but is invalid/expired server-side.
+                // Clear it to keep UI state consistent with the backend.
+                setAccessToken(null);
+                setUserInfo('');
+                setAuthStatus(message || 'Not signed in. Please sign in again.');
+                const tasksDiv = document.getElementById('tasks');
+                if (tasksDiv) tasksDiv.innerHTML = '<p>Not signed in. Click Sign in to load tasks.</p>';
+                const scheduleDiv = document.getElementById('schedule');
+                if (scheduleDiv) scheduleDiv.innerHTML = '';
+            }
+
             async function apiFetch(path, options = {}) {
                 const token = getAccessToken();
                 const headers = Object.assign({}, options.headers || {});
@@ -370,6 +386,7 @@ async def root():
                 }
                 const response = await fetch(path, Object.assign({}, options, { headers }));
                 if (response.status === 401 || response.status === 403) {
+                    onAuthFailure('Not signed in (401/403). Use the Sign in button above.');
                     throw new Error("Not signed in (401/403). Use the Sign in button above.");
                 }
                 return response;
@@ -458,6 +475,10 @@ async def root():
                 // Users must click the button to sign in, which will show account selection
                 setAuthStatus(getAccessToken() ? 'Signed in (token present).' : 'Not signed in.');
                 await refreshMe();
+                // If token was invalid and got cleared during refresh, reflect that.
+                if (!getAccessToken()) {
+                    setAuthStatus('Not signed in.');
+                }
             }
 
             function signOut() {
@@ -614,11 +635,14 @@ async def root():
             async function viewTasks() {
                 const tasksDiv = document.getElementById('tasks');
                 try {
+                    const tasksUpdated = document.getElementById('tasksUpdated');
+                    if (tasksUpdated) tasksUpdated.textContent = 'Refreshing...';
                     const response = await apiFetch('/tasks');
                     const data = await response.json();
                     
                     if (data.tasks.length === 0) {
                         tasksDiv.innerHTML = '<p>No tasks yet. Create a task or import from Google Sheets.</p>';
+                        if (tasksUpdated) tasksUpdated.textContent = `Last refreshed: ${new Date().toLocaleString()}`;
                         return;
                     }
                     
@@ -637,8 +661,11 @@ async def root():
                     html += '</table></div>';
                     
                     tasksDiv.innerHTML = html;
+                    if (tasksUpdated) tasksUpdated.textContent = `Last refreshed: ${new Date().toLocaleString()}`;
                 } catch (error) {
                     tasksDiv.innerHTML = 'Error: ' + error.message;
+                    const tasksUpdated = document.getElementById('tasksUpdated');
+                    if (tasksUpdated) tasksUpdated.textContent = 'Refresh failed.';
                 }
             }
             
@@ -686,11 +713,15 @@ async def root():
             }
             
             // Load tasks on page load
-            window.onload = function() {
-                initGoogleSignIn();
+            window.onload = async function() {
+                await initGoogleSignIn();
                 if (getAccessToken()) {
-                    viewTasks();
-                    loadShortcutTokenStatus();
+                    // Validate token before trying other authenticated calls.
+                    await refreshMe();
+                }
+                if (getAccessToken()) {
+                    await viewTasks();
+                    await loadShortcutTokenStatus();
                 } else {
                     document.getElementById('tasks').innerHTML = '<p>Sign in to load tasks.</p>';
                 }
