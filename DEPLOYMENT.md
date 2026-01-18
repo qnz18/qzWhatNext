@@ -66,21 +66,33 @@ gcloud app browse
 1. Build and push Docker image:
 ```bash
 # Set project
-gcloud config set project qzwhatnext
+export PROJECT_ID=qzwhatnext
+export REGION=us-central1
+gcloud config set project $PROJECT_ID
 
-# Build image
-gcloud builds submit --tag gcr.io/qzwhatnext/qzwhatnext
+# Enable Artifact Registry (recommended)
+gcloud services enable artifactregistry.googleapis.com
 
-# Or use Docker directly
-docker build -t gcr.io/qzwhatnext/qzwhatnext .
-docker push gcr.io/qzwhatnext/qzwhatnext
+# Create a Docker repo in Artifact Registry (one-time)
+gcloud artifacts repositories create qzwhatnext \
+  --repository-format=docker \
+  --location $REGION \
+  --description="qzWhatNext container images" \
+  --project $PROJECT_ID
+
+# Configure Docker auth for Artifact Registry
+gcloud auth configure-docker $REGION-docker.pkg.dev --quiet
+
+# Build + push image
+docker build -t $REGION-docker.pkg.dev/$PROJECT_ID/qzwhatnext/qzwhatnext .
+docker push $REGION-docker.pkg.dev/$PROJECT_ID/qzwhatnext/qzwhatnext
 ```
 
 2. Deploy to Cloud Run:
 ```bash
 # Deploy with required multi-user authentication environment variables
 gcloud run deploy qzwhatnext \
-  --image gcr.io/qzwhatnext/qzwhatnext \
+  --image $REGION-docker.pkg.dev/$PROJECT_ID/qzwhatnext/qzwhatnext \
   --platform managed \
   --region us-central1 \
   --allow-unauthenticated \

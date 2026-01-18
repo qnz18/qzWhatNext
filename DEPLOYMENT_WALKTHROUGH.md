@@ -267,13 +267,27 @@ gsutil iam ch allUsers:objectViewer gs://$PROJECT_ID-sqlite-data  # Remove publi
 # Navigate to project root
 cd /path/to/qzWhatNext
 
-# Build and push image to Google Container Registry
-gcloud builds submit --tag gcr.io/$PROJECT_ID/$SERVICE_NAME
+# Use Artifact Registry (recommended)
+gcloud services enable artifactregistry.googleapis.com --project $PROJECT_ID
+
+# Create a Docker repo in Artifact Registry (one-time)
+gcloud artifacts repositories create qzwhatnext \
+  --repository-format=docker \
+  --location $REGION \
+  --description="qzWhatNext container images" \
+  --project $PROJECT_ID
+
+# Configure Docker auth for Artifact Registry
+gcloud auth configure-docker $REGION-docker.pkg.dev --quiet
+
+# Build + push
+docker build -t $REGION-docker.pkg.dev/$PROJECT_ID/qzwhatnext/$SERVICE_NAME .
+docker push $REGION-docker.pkg.dev/$PROJECT_ID/qzwhatnext/$SERVICE_NAME
 ```
 
 **This will:**
 - Build your Docker image
-- Push it to Google Container Registry
+- Push it to Artifact Registry
 - Take 5-10 minutes (first time)
 
 **Note:** Make sure you're in the project root directory with `Dockerfile`.
@@ -283,7 +297,7 @@ gcloud builds submit --tag gcr.io/$PROJECT_ID/$SERVICE_NAME
 **For Option A (Ephemeral Storage - Testing):**
 ```bash
 gcloud run deploy $SERVICE_NAME \
-  --image gcr.io/$PROJECT_ID/$SERVICE_NAME \
+  --image $REGION-docker.pkg.dev/$PROJECT_ID/qzwhatnext/$SERVICE_NAME \
   --platform managed \
   --region $REGION \
   --allow-unauthenticated \
@@ -296,7 +310,7 @@ gcloud run deploy $SERVICE_NAME \
 **For Option A (Ephemeral Storage - Recommended for this walkthrough):**
 ```bash
 gcloud run deploy $SERVICE_NAME \
-  --image gcr.io/$PROJECT_ID/$SERVICE_NAME \
+  --image $REGION-docker.pkg.dev/$PROJECT_ID/qzwhatnext/$SERVICE_NAME \
   --platform managed \
   --region $REGION \
   --allow-unauthenticated \
@@ -419,7 +433,7 @@ curl -X POST $SERVICE_URL/schedule \
 4. Redeploy (to test if data persists):
    ```bash
    gcloud run deploy $SERVICE_NAME \
-     --image gcr.io/$PROJECT_ID/$SERVICE_NAME \
+     --image $REGION-docker.pkg.dev/$PROJECT_ID/qzwhatnext/$SERVICE_NAME \
      --region $REGION
    ```
 5. Check if tasks persist after redeployment
@@ -517,10 +531,18 @@ export GOOGLE_OAUTH_CLIENT_ID=your-client-id.apps.googleusercontent.com
 export REGION=us-central1
 export SERVICE_NAME=qzwhatnext
 
-gcloud builds submit --tag gcr.io/$PROJECT_ID/$SERVICE_NAME
+gcloud services enable artifactregistry.googleapis.com --project $PROJECT_ID
+gcloud artifacts repositories create qzwhatnext \
+  --repository-format=docker \
+  --location $REGION \
+  --description="qzWhatNext container images" \
+  --project $PROJECT_ID
+gcloud auth configure-docker $REGION-docker.pkg.dev --quiet
+docker build -t $REGION-docker.pkg.dev/$PROJECT_ID/qzwhatnext/$SERVICE_NAME .
+docker push $REGION-docker.pkg.dev/$PROJECT_ID/qzwhatnext/$SERVICE_NAME
 
 gcloud run deploy $SERVICE_NAME \
-  --image gcr.io/$PROJECT_ID/$SERVICE_NAME \
+  --image $REGION-docker.pkg.dev/$PROJECT_ID/qzwhatnext/$SERVICE_NAME \
   --platform managed \
   --region $REGION \
   --allow-unauthenticated \
