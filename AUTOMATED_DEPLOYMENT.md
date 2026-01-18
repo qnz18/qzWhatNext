@@ -42,6 +42,10 @@ gcloud projects add-iam-policy-binding $PROJECT_ID \
 
 gcloud projects add-iam-policy-binding $PROJECT_ID \
   --member="serviceAccount:github-actions@$PROJECT_ID.iam.gserviceaccount.com" \
+  --role="roles/cloudbuild.builds.editor"
+
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+  --member="serviceAccount:github-actions@$PROJECT_ID.iam.gserviceaccount.com" \
   --role="roles/iam.serviceAccountUser"
 
 gcloud projects add-iam-policy-binding $PROJECT_ID \
@@ -62,6 +66,13 @@ cat gcp-sa-key.json
 
 # Clean up local key file (important!)
 rm gcp-sa-key.json
+```
+
+**Repo helper script (does the same thing):**
+
+```bash
+chmod +x scripts/setup_gcp_github_actions.sh
+scripts/setup_gcp_github_actions.sh --project qzwhatnext --create-jwt-secret
 ```
 
 #### Step 2: Add GitHub Secrets
@@ -166,6 +177,13 @@ gcloud builds triggers create github \
 ## Option 3: Simple Deploy Script (Local Automation)
 
 For local automation without CI/CD:
+
+**Repo helper script (ready to run):**
+
+```bash
+chmod +x scripts/deploy_cloud_run.sh
+scripts/deploy_cloud_run.sh --project qzwhatnext --google-oauth-client-id "your-client-id.apps.googleusercontent.com"
+```
 
 ```bash
 #!/bin/bash

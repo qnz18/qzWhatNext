@@ -24,6 +24,10 @@ token.json
 client_secret*.json
 sheets_token.json
 
+# GCP service account keys (never commit)
+gcp-sa-key.json
+*gcp-sa-key*.json
+
 # Private keys and certificates
 *.pem
 *.key

@@ -36,6 +36,8 @@ SECRET_FILE_PATTERNS=(
     "token.json"
     "sheets_token.json"
     "client_secret*.json"
+    "gcp-sa-key.json"
+    "*gcp-sa-key*.json"
     "*.pem"  # Private key files
     "*.key"  # Key files
 )
