@@ -20,6 +20,49 @@ A task is AI-excluded if:
 
 **This is the most critical rule. Violating it breaks user trust.**
 
+### Canonical Docs Governance (MUST ENFORCE: NO SILENT DIVERGENCE)
+
+qzWhatNext treats canonical docs as the **source of truth** for product + engine behavior.
+
+**Canonical rule:** Chats generate artifacts. Artifacts replace chats.
+
+**Enforcement requirement:** If you change behavior, you must update canonical docs (and/or decision log) in the same change set. **Silent divergence is not allowed.**
+
+**Canonical docs (primary):**
+- `context-pack.md` (global rules, AI guardrails, fixed hierarchy, trust contract)
+- `decision-log/decisions.md` (locked decisions + rationales; change log for non-obvious behavior)
+- `engine/scoring-and-scheduling.md` (engine spec: data model, pipeline, constraints, scheduling/overflow)
+- `prd/prd.md` (MVP scope and requirements)
+
+**MUST update canonical docs when you change any externally observable behavior, including:**
+- API semantics, inputs/outputs, auth requirements, error shapes
+- Scheduling constraints/authority (what can/can’t move), tiering, overflow behavior, explainability rules
+- AI guardrails, AI-exclusion rules, confidence thresholds, fallbacks, privacy boundaries
+- Data model fields, meanings, defaults, or validation rules
+- Engine pipeline steps or their ordering
+
+**MUST NOT churn canonical docs for implementation-only changes:**
+- Refactors, renames, formatting, perf improvements, reorganization that does not change behavior
+- Internal helpers/abstractions that preserve the same inputs → same outputs contract
+
+**Stability guideline (MVP “Locked” docs):**
+- Prefer long periods of stability; update only when the actual system contract changes or when resolving a real spec/code contradiction.
+- If you must change a “Locked (MVP)” decision, record it explicitly in `decision-log/decisions.md` (do not hand-wave it in code).
+
+### Testing Governance (MUST ENFORCE: NO SILENT TEST GAPS)
+
+qzWhatNext uses tests as part of the definition of done for behavior changes.
+
+**Enforcement requirement:** If you change externally observable behavior, you must add/update **deterministic tests** in the same change set. Don’t ship behavior changes without tests.
+
+**Risk-based coverage (recommended default):**
+- Prioritize trust-critical paths: AI exclusion, auth/user scoping, tier assignment, scheduling authority/constraints, overflow handling, explainability, audit logging
+- Prefer the smallest test that proves the new contract (unit tests where possible; integration tests where needed)
+
+**Allowed exception (must be explicit):**
+- If a behavior change cannot be practically tested right now, you must document why (e.g., missing seam, upstream dependency) and create a concrete follow-up to add coverage.
+  - Do not silently skip tests.
+
 ### Core Non-Negotiable Principles
 
 **Trust over optimization**
