@@ -55,6 +55,8 @@ htmlcov/
 
 # Database files (auto-generated on first run)
 *.db
+*.db-shm
+*.db-wal
 
 # Distribution / packaging
 dist/

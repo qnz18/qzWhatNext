@@ -3,10 +3,25 @@
 runtime: python39
 
 env_variables:
-  # These should be set in App Engine environment variables or Secret Manager
+  # Multi-user authentication (required)
+  # GOOGLE_OAUTH_CLIENT_ID: your-google-oauth-client-id.apps.googleusercontent.com
+  # JWT_SECRET_KEY: your-secure-jwt-secret-key  # Use Secret Manager in production
+  
+  # JWT configuration (optional, has defaults)
+  # JWT_ALGORITHM: HS256
+  # JWT_EXPIRATION_HOURS: 24
+  
+  # Google Calendar/Sheets integration (optional)
   # GOOGLE_CALENDAR_CREDENTIALS_PATH: path/to/credentials.json
-  # GOOGLE_CALENDAR_CREDENTIALS_PATH: credentials.json
+  # GOOGLE_SHEETS_CREDENTIALS_PATH: path/to/credentials.json
   # GOOGLE_CALENDAR_ID: primary
+  
+  # Database (optional, defaults to SQLite)
+  # DATABASE_URL: sqlite:///./qzwhatnext.db
+  
+  # AI inference (optional)
+  # OPENAI_API_KEY: your-openai-api-key  # Use Secret Manager in production
+  
   DEBUG: "False"
 
 handlers:

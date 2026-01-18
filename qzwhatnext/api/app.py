@@ -439,13 +439,23 @@ async def root():
                 }
                 google.accounts.id.initialize({
                     client_id: clientId,
-                    callback: handleGoogleCredentialResponse
+                    callback: handleGoogleCredentialResponse,
+                    // Don't auto-select account - force user to choose
+                    auto_select: false,
+                    // Cancel One Tap prompt to force button click for account selection
+                    cancel_on_tap_outside: true
                 });
                 google.accounts.id.renderButton(
                     document.getElementById("gsi-button"),
-                    { theme: "outline", size: "large" }
+                    { 
+                        theme: "outline", 
+                        size: "large",
+                        text: "signin_with",
+                        shape: "rectangular"
+                    }
                 );
-                google.accounts.id.prompt();
+                // Don't auto-prompt - this was auto-signing in with default account
+                // Users must click the button to sign in, which will show account selection
                 setAuthStatus(getAccessToken() ? 'Signed in (token present).' : 'Not signed in.');
                 await refreshMe();
             }
