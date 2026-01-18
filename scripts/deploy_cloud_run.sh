@@ -12,7 +12,7 @@
 # Optional env vars:
 #   SERVICE_NAME (default: qzwhatnext)
 #   REGION       (default: us-central1)
-#   IMAGE_NAME   (default: gcr.io/$PROJECT_ID/$SERVICE_NAME)
+#   IMAGE_NAME   (default: $REGION-docker.pkg.dev/$PROJECT_ID/qzwhatnext/$SERVICE_NAME)
 
 set -euo pipefail
 
@@ -66,13 +66,29 @@ if ! command -v gcloud >/dev/null 2>&1; then
   exit 1
 fi
 
-IMAGE_NAME="${IMAGE_NAME:-gcr.io/${PROJECT_ID}/${SERVICE_NAME}}"
+IMAGE_NAME="${IMAGE_NAME:-${REGION}-docker.pkg.dev/${PROJECT_ID}/qzwhatnext/${SERVICE_NAME}}"
 
 echo "Using project: ${PROJECT_ID}"
 gcloud config set project "${PROJECT_ID}" >/dev/null
 
-echo "Building and pushing image via Cloud Build: ${IMAGE_NAME}"
-gcloud builds submit --tag "${IMAGE_NAME}"
+echo "Ensuring Artifact Registry repository exists: qzwhatnext (${REGION})"
+gcloud services enable artifactregistry.googleapis.com --project "${PROJECT_ID}" >/dev/null
+if ! gcloud artifacts repositories describe qzwhatnext --location "${REGION}" --project "${PROJECT_ID}" >/dev/null 2>&1; then
+  gcloud artifacts repositories create qzwhatnext \
+    --repository-format=docker \
+    --location "${REGION}" \
+    --description="qzWhatNext container images" \
+    --project "${PROJECT_ID}" >/dev/null
+fi
+
+echo "Configuring Docker auth for Artifact Registry..."
+gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
+echo "Building image: ${IMAGE_NAME}"
+docker build -t "${IMAGE_NAME}" .
+
+echo "Pushing image: ${IMAGE_NAME}"
+docker push "${IMAGE_NAME}"
 
 echo "Deploying to Cloud Run service: ${SERVICE_NAME} (${REGION})"
 gcloud run deploy "${SERVICE_NAME}" \

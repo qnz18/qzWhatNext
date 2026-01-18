@@ -64,10 +64,11 @@ fi
 echo "Setting gcloud project to: ${PROJECT_ID}"
 gcloud config set project "${PROJECT_ID}" >/dev/null
 
-echo "Enabling required services (run, cloudbuild, secretmanager)..."
+echo "Enabling required services (run, cloudbuild, artifactregistry, secretmanager)..."
 gcloud services enable \
   run.googleapis.com \
   cloudbuild.googleapis.com \
+  artifactregistry.googleapis.com \
   secretmanager.googleapis.com \
   --project "${PROJECT_ID}" >/dev/null
 
@@ -93,6 +94,11 @@ gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
   --member="serviceAccount:${SA_EMAIL}" \
   --role="roles/cloudbuild.builds.editor" >/dev/null
 
+## Required for: `docker push` to Artifact Registry
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+  --member="serviceAccount:${SA_EMAIL}" \
+  --role="roles/artifactregistry.writer" >/dev/null
+
 gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
   --member="serviceAccount:${SA_EMAIL}" \
   --role="roles/iam.serviceAccountUser" >/dev/null
@@ -104,6 +110,19 @@ gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
 gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
   --member="serviceAccount:${SA_EMAIL}" \
   --role="roles/secretmanager.secretAccessor" >/dev/null
+
+AR_LOCATION="${REGION}"
+AR_REPO="qzwhatnext"
+if gcloud artifacts repositories describe "${AR_REPO}" --location "${AR_LOCATION}" --project "${PROJECT_ID}" >/dev/null 2>&1; then
+  echo "Artifact Registry repository already exists: ${AR_REPO} (${AR_LOCATION})"
+else
+  echo "Creating Artifact Registry repository: ${AR_REPO} (${AR_LOCATION})"
+  gcloud artifacts repositories create "${AR_REPO}" \
+    --repository-format=docker \
+    --location "${AR_LOCATION}" \
+    --description="qzWhatNext container images" \
+    --project "${PROJECT_ID}" >/dev/null
+fi
 
 KEY_FILE="gcp-sa-key.json"
 echo "Creating service account key at ./${KEY_FILE}"

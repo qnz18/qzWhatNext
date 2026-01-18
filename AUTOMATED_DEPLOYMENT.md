@@ -113,7 +113,7 @@ Deployment will trigger automatically! Check the **Actions** tab in GitHub to se
 When you push to `main`:
 1. GitHub Actions workflow triggers
 2. Authenticates to GCP using service account key
-3. Builds Docker image using Cloud Build
+3. Builds + pushes Docker image to Artifact Registry
 4. Deploys to Cloud Run
 5. Service URL is displayed in workflow output
 
