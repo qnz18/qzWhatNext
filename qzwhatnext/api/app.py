@@ -247,18 +247,6 @@ async def root():
             <div id="authStatus" class="muted"></div>
             <div id="userInfo" class="muted"></div>
         </div>
-        
-        <div class="section">
-            <h2>iOS Shortcut Token</h2>
-            <p class="muted">Generate a long-lived token for iOS Shortcuts. Keep it secret. You can revoke it anytime.</p>
-            <div class="row">
-                <button onclick="createShortcutToken()">Create / Rotate Token</button>
-                <button onclick="revokeShortcutToken()">Revoke Token</button>
-                <button onclick="loadShortcutTokenStatus()">Refresh Status</button>
-            </div>
-            <div id="shortcutTokenStatus" class="muted"></div>
-            <pre id="shortcutTokenValue" style="white-space: pre-wrap;"></pre>
-        </div>
 
         <div class="section">
             <h2>Actions</h2>
@@ -339,6 +327,18 @@ async def root():
                 </div>
                 <button type="submit">Import Tasks</button>
             </form>
+        </div>
+
+        <div class="section">
+            <h2>iOS Shortcut Token</h2>
+            <p class="muted">Generate a long-lived token for iOS Shortcuts. Keep it secret. You can revoke it anytime.</p>
+            <div class="row">
+                <button onclick="createShortcutToken()">Create / Rotate Token</button>
+                <button onclick="revokeShortcutToken()">Revoke Token</button>
+                <button onclick="loadShortcutTokenStatus()">Refresh Status</button>
+            </div>
+            <div id="shortcutTokenStatus" class="muted"></div>
+            <pre id="shortcutTokenValue" style="white-space: pre-wrap;"></pre>
         </div>
         
         <script>
