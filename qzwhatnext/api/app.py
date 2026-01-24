@@ -347,6 +347,31 @@ async def root():
         
         <script>
             const ACCESS_TOKEN_KEY = "qz_access_token";
+            let authVersion = 0;
+            let currentUserEmail = null;
+            const activeRequestControllers = new Set();
+
+            function isStale(version) {
+                return version !== authVersion;
+            }
+
+            function bumpAuthVersion() {
+                authVersion += 1;
+                for (const controller of activeRequestControllers) {
+                    try { controller.abort(); } catch (e) { /* ignore */ }
+                }
+                activeRequestControllers.clear();
+            }
+
+            function beginRequest(version) {
+                const controller = new AbortController();
+                activeRequestControllers.add(controller);
+                return {
+                    signal: controller.signal,
+                    done: () => activeRequestControllers.delete(controller),
+                    version: version
+                };
+            }
 
             function getAccessToken() {
                 return localStorage.getItem(ACCESS_TOKEN_KEY);
@@ -374,15 +399,19 @@ async def root():
                 if (el) el.textContent = message || '';
             }
 
-            function onAuthFailure(message) {
+            function onAuthFailure(message, version = authVersion) {
+                if (isStale(version)) return;
                 // Token exists locally but is invalid/expired server-side.
                 // Clear it to keep UI state consistent with the backend.
+                bumpAuthVersion();
                 setAccessToken(null);
-                setJwtUiState();
+                currentUserEmail = null;
                 setUserInfo('');
-                setAuthStatus(message || 'Not signed in. Please sign in again.');
+                setAuthStatus(message || 'Session expired. Please sign in again.');
                 const tasksDiv = document.getElementById('tasks');
                 if (tasksDiv) tasksDiv.innerHTML = '<p>Not signed in. Click Sign in to load tasks.</p>';
+                const tasksUpdated = document.getElementById('tasksUpdated');
+                if (tasksUpdated) tasksUpdated.textContent = '';
                 const scheduleDiv = document.getElementById('schedule');
                 if (scheduleDiv) scheduleDiv.innerHTML = '';
             }
@@ -432,33 +461,89 @@ async def root():
                 }
             }
 
-            async function apiFetch(path, options = {}) {
+            async function apiFetch(path, options = {}, version = authVersion) {
                 const token = getAccessToken();
                 const headers = Object.assign({}, options.headers || {});
                 if (token) {
                     headers['Authorization'] = `Bearer ${token}`;
                 }
-                const response = await fetch(path, Object.assign({}, options, { headers }));
-                if (response.status === 401 || response.status === 403) {
-                    onAuthFailure('Not signed in (401/403). Use the Sign in button above.');
-                    throw new Error("Not signed in (401/403). Use the Sign in button above.");
+                const req = beginRequest(version);
+                try {
+                    const response = await fetch(path, Object.assign({}, options, { headers, signal: req.signal }));
+                    if (response.status === 401 || response.status === 403) {
+                        let detail = '';
+                        try {
+                            const err = await response.clone().json();
+                            detail = (err && err.detail) ? String(err.detail) : '';
+                        } catch (e) {
+                            // ignore parse failure
+                        }
+                        const msg = detail || 'Session expired. Please sign in again.';
+                        onAuthFailure(msg, version);
+                        throw new Error(msg);
+                    }
+                    return response;
+                } finally {
+                    req.done();
                 }
-                return response;
             }
 
-            async function refreshMe() {
+            async function refreshMe(version = authVersion) {
                 try {
-                    const response = await apiFetch('/auth/me');
+                    const response = await apiFetch('/auth/me', {}, version);
                     const data = await response.json();
+                    if (isStale(version)) return null;
                     const u = data.user || data;
                     if (u && u.email) {
+                        currentUserEmail = u.email;
                         setUserInfo(`Signed in as ${u.email}`);
                     } else {
+                        currentUserEmail = null;
                         setUserInfo('Signed in.');
                     }
+                    return u;
                 } catch (e) {
-                    setUserInfo('');
+                    if (!isStale(version)) {
+                        currentUserEmail = null;
+                        setUserInfo('');
+                    }
+                    return null;
                 }
+            }
+
+            function showSignedOutUi(message) {
+                setAuthStatus(message || 'Not signed in.');
+                setUserInfo('');
+                setJwtUiState();
+                const tasksDiv = document.getElementById('tasks');
+                if (tasksDiv) tasksDiv.innerHTML = '<p>Sign in to load tasks.</p>';
+                const tasksUpdated = document.getElementById('tasksUpdated');
+                if (tasksUpdated) tasksUpdated.textContent = '';
+                const scheduleDiv = document.getElementById('schedule');
+                if (scheduleDiv) scheduleDiv.innerHTML = '';
+                const shortcutStatus = document.getElementById('shortcutTokenStatus');
+                if (shortcutStatus) shortcutStatus.textContent = '';
+                const shortcutVal = document.getElementById('shortcutTokenValue');
+                if (shortcutVal) shortcutVal.textContent = '';
+            }
+
+            async function syncSessionOnLoad() {
+                const version = authVersion;
+                if (!getAccessToken()) {
+                    showSignedOutUi('Not signed in.');
+                    return;
+                }
+                setAuthStatus('Checking session...');
+                await refreshMe(version);
+                if (isStale(version)) return;
+                if (!getAccessToken()) {
+                    // Token was cleared during refresh (expired/invalid)
+                    showSignedOutUi('Session expired. Please sign in again.');
+                    return;
+                }
+                setAuthStatus('Signed in.');
+                await viewTasks(version);
+                await loadShortcutTokenStatus(version);
             }
 
             async function loadAuthConfig() {
@@ -469,6 +554,7 @@ async def root():
 
             async function handleGoogleCredentialResponse(response) {
                 try {
+                    const preLoginVersion = authVersion;
                     setAuthStatus('Signing in...');
                     const idToken = response && response.credential;
                     if (!idToken) {
@@ -487,11 +573,16 @@ async def root():
                     }
 
                     const data = await res.json();
+                    if (isStale(preLoginVersion)) return;
+                    // Invalidate any in-flight requests tied to the old auth state.
+                    bumpAuthVersion();
                     setAccessToken(data.access_token);
+                    const version = authVersion;
                     setAuthStatus('Signed in.');
-                    await refreshMe();
-                    setJwtUiState();
-                    await viewTasks();
+                    await refreshMe(version);
+                    if (isStale(version)) return;
+                    await viewTasks(version);
+                    await loadShortcutTokenStatus(version);
                 } catch (e) {
                     console.error('Auth error:', e);
                     setAuthStatus('Auth error: ' + (e && e.message ? e.message : String(e)));
@@ -509,6 +600,7 @@ async def root():
                     setAuthStatus('Google sign-in library not loaded yet. Refresh in a second.');
                     return;
                 }
+                setJwtUiState();
                 google.accounts.id.initialize({
                     client_id: clientId,
                     callback: handleGoogleCredentialResponse,
@@ -526,73 +618,102 @@ async def root():
                         shape: "rectangular"
                     }
                 );
-                // Don't auto-prompt - this was auto-signing in with default account
-                // Users must click the button to sign in, which will show account selection
-                setAuthStatus(getAccessToken() ? 'Signed in (token present).' : 'Not signed in.');
-                await refreshMe();
-                // If token was invalid and got cleared during refresh, reflect that.
-                if (!getAccessToken()) {
-                    setAuthStatus('Not signed in.');
+                // Don't auto-prompt - users must click the button to sign in.
+                // Also: don't claim "Signed in" unless the backend validates the session.
+                if (getAccessToken()) {
+                    setAuthStatus('Checking session...');
+                    await syncSessionOnLoad();
+                } else {
+                    showSignedOutUi('Not signed in.');
                 }
-                setJwtUiState();
             }
 
             function signOut() {
+                // Ensure any in-flight requests can’t update the UI after logout.
+                bumpAuthVersion();
                 setAccessToken(null);
-                setJwtUiState();
                 setAuthStatus('Signed out.');
                 setUserInfo('');
+                try {
+                    if (window.google && google.accounts && google.accounts.id) {
+                        // Prevent Google from silently reusing the last account selection.
+                        google.accounts.id.disableAutoSelect();
+                        // Best-effort revoke; even if it fails, local logout still stands.
+                        if (currentUserEmail) {
+                            google.accounts.id.revoke(currentUserEmail, () => {});
+                        }
+                    }
+                } catch (e) {
+                    // ignore
+                }
+                currentUserEmail = null;
                 document.getElementById('tasks').innerHTML = '<p>Signed out. Sign in to load tasks.</p>';
+                const tasksUpdated = document.getElementById('tasksUpdated');
+                if (tasksUpdated) tasksUpdated.textContent = '';
                 document.getElementById('schedule').innerHTML = '';
+                const shortcutStatus = document.getElementById('shortcutTokenStatus');
+                if (shortcutStatus) shortcutStatus.textContent = '';
+                const shortcutVal = document.getElementById('shortcutTokenValue');
+                if (shortcutVal) shortcutVal.textContent = '';
             }
 
-            async function loadShortcutTokenStatus() {
+            async function loadShortcutTokenStatus(version = authVersion) {
                 const el = document.getElementById('shortcutTokenStatus');
                 const val = document.getElementById('shortcutTokenValue');
                 val.textContent = '';
                 try {
-                    const res = await apiFetch('/auth/shortcut-token');
+                    const res = await apiFetch('/auth/shortcut-token', {}, version);
                     const data = await res.json();
+                    if (isStale(version)) return;
                     if (!data.active) {
                         el.textContent = 'No active shortcut token.';
                         return;
                     }
                     el.textContent = `Active token prefix: ${data.token_prefix || ''} (created ${data.created_at || ''})`;
                 } catch (e) {
-                    el.textContent = 'Error: ' + (e && e.message ? e.message : String(e));
+                    if (!isStale(version)) {
+                        el.textContent = 'Error: ' + (e && e.message ? e.message : String(e));
+                    }
                 }
             }
 
-            async function createShortcutToken() {
+            async function createShortcutToken(version = authVersion) {
                 const el = document.getElementById('shortcutTokenStatus');
                 const val = document.getElementById('shortcutTokenValue');
                 val.textContent = '';
                 try {
                     el.textContent = 'Creating token...';
-                    const res = await apiFetch('/auth/shortcut-token', { method: 'POST' });
+                    const res = await apiFetch('/auth/shortcut-token', { method: 'POST' }, version);
                     const data = await res.json();
+                    if (isStale(version)) return;
                     el.textContent = `Created token prefix: ${data.token_prefix}. Copy the token below (shown once).`;
                     val.textContent = data.token;
                 } catch (e) {
-                    el.textContent = 'Error: ' + (e && e.message ? e.message : String(e));
+                    if (!isStale(version)) {
+                        el.textContent = 'Error: ' + (e && e.message ? e.message : String(e));
+                    }
                 }
             }
 
-            async function revokeShortcutToken() {
+            async function revokeShortcutToken(version = authVersion) {
                 const el = document.getElementById('shortcutTokenStatus');
                 const val = document.getElementById('shortcutTokenValue');
                 val.textContent = '';
                 try {
                     el.textContent = 'Revoking token...';
-                    await apiFetch('/auth/shortcut-token', { method: 'DELETE' });
+                    await apiFetch('/auth/shortcut-token', { method: 'DELETE' }, version);
+                    if (isStale(version)) return;
                     el.textContent = 'Token revoked.';
                 } catch (e) {
-                    el.textContent = 'Error: ' + (e && e.message ? e.message : String(e));
+                    if (!isStale(version)) {
+                        el.textContent = 'Error: ' + (e && e.message ? e.message : String(e));
+                    }
                 }
             }
 
             async function createTask(event) {
                 event.preventDefault();
+                const version = authVersion;
                 const status = document.getElementById('status');
                 status.innerHTML = 'Creating task...';
                 
@@ -608,7 +729,7 @@ async def root():
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(taskData)
-                    });
+                    }, version);
                     
                     if (!response.ok) {
                         const error = await response.json();
@@ -616,16 +737,20 @@ async def root():
                     }
                     
                     const data = await response.json();
+                    if (isStale(version)) return;
                     status.innerHTML = `Task created: "${data.task.title}"`;
                     document.getElementById('createTaskForm').reset();
-                    await viewTasks();
+                    await viewTasks(version);
                 } catch (error) {
-                    status.innerHTML = 'Error: ' + error.message;
+                    if (!isStale(version)) {
+                        status.innerHTML = 'Error: ' + error.message;
+                    }
                 }
             }
             
             async function importFromSheets(event) {
                 event.preventDefault();
+                const version = authVersion;
                 const status = document.getElementById('status');
                 status.innerHTML = 'Importing from Google Sheets...';
                 
@@ -647,7 +772,7 @@ async def root():
                         body: JSON.stringify(importData),
                         mode: 'cors',
                         credentials: 'same-origin'
-                    });
+                    }, version);
                     
                     if (!response.ok) {
                         const error = await response.json();
@@ -655,47 +780,59 @@ async def root():
                     }
                     
                     const data = await response.json();
+                    if (isStale(version)) return;
                     status.innerHTML = `Imported ${data.imported_count} tasks${data.duplicates_detected > 0 ? ` (${data.duplicates_detected} duplicates detected)` : ''}`;
                     document.getElementById('importSheetsForm').reset();
-                    await viewTasks();
+                    await viewTasks(version);
                 } catch (error) {
                     console.error('Import error:', error);
-                    status.innerHTML = 'Error: ' + error.message + '. Check server console for details.';
+                    if (!isStale(version)) {
+                        status.innerHTML = 'Error: ' + error.message + '. Check server console for details.';
+                    }
                 }
             }
             
             async function buildSchedule() {
+                const version = authVersion;
                 const status = document.getElementById('status');
                 status.innerHTML = 'Building schedule...';
                 try {
-                    const response = await apiFetch('/schedule', { method: 'POST' });
+                    const response = await apiFetch('/schedule', { method: 'POST' }, version);
                     const data = await response.json();
+                    if (isStale(version)) return;
                     status.innerHTML = `Schedule built: ${data.scheduled_blocks.length} blocks, ${data.overflow_tasks.length} overflow`;
-                    await viewSchedule();
+                    await viewSchedule(version);
                 } catch (error) {
-                    status.innerHTML = 'Error: ' + error.message;
+                    if (!isStale(version)) {
+                        status.innerHTML = 'Error: ' + error.message;
+                    }
                 }
             }
             
             async function syncCalendar() {
+                const version = authVersion;
                 const status = document.getElementById('status');
                 status.innerHTML = 'Syncing to Google Calendar...';
                 try {
-                    const response = await apiFetch('/sync-calendar', { method: 'POST' });
+                    const response = await apiFetch('/sync-calendar', { method: 'POST' }, version);
                     const data = await response.json();
+                    if (isStale(version)) return;
                     status.innerHTML = `Synced ${data.events_created} events to Google Calendar`;
                 } catch (error) {
-                    status.innerHTML = 'Error: ' + error.message;
+                    if (!isStale(version)) {
+                        status.innerHTML = 'Error: ' + error.message;
+                    }
                 }
             }
             
-            async function viewTasks() {
+            async function viewTasks(version = authVersion) {
                 const tasksDiv = document.getElementById('tasks');
                 try {
                     const tasksUpdated = document.getElementById('tasksUpdated');
-                    if (tasksUpdated) tasksUpdated.textContent = 'Refreshing...';
-                    const response = await apiFetch('/tasks');
+                    if (tasksUpdated && !isStale(version)) tasksUpdated.textContent = 'Refreshing...';
+                    const response = await apiFetch('/tasks', {}, version);
                     const data = await response.json();
+                    if (isStale(version)) return;
                     
                     if (data.tasks.length === 0) {
                         tasksDiv.innerHTML = '<p>No tasks yet. Create a task or import from Google Sheets.</p>';
@@ -720,17 +857,19 @@ async def root():
                     tasksDiv.innerHTML = html;
                     if (tasksUpdated) tasksUpdated.textContent = `Last refreshed: ${new Date().toLocaleString()}`;
                 } catch (error) {
+                    if (isStale(version)) return;
                     tasksDiv.innerHTML = 'Error: ' + error.message;
                     const tasksUpdated = document.getElementById('tasksUpdated');
                     if (tasksUpdated) tasksUpdated.textContent = 'Refresh failed.';
                 }
             }
             
-            async function viewSchedule() {
+            async function viewSchedule(version = authVersion) {
                 const scheduleDiv = document.getElementById('schedule');
                 try {
-                    const response = await apiFetch('/schedule');
+                    const response = await apiFetch('/schedule', {}, version);
                     const data = await response.json();
+                    if (isStale(version)) return;
                     
                     if (data.scheduled_blocks.length === 0) {
                         scheduleDiv.innerHTML = '<p>No schedule available. Build a schedule first.</p>';
@@ -765,6 +904,7 @@ async def root():
                     
                     scheduleDiv.innerHTML = html;
                 } catch (error) {
+                    if (isStale(version)) return;
                     scheduleDiv.innerHTML = 'Error: ' + error.message;
                 }
             }
@@ -772,17 +912,8 @@ async def root():
             // Load tasks on page load
             window.onload = async function() {
                 await initGoogleSignIn();
-                if (getAccessToken()) {
-                    // Validate token before trying other authenticated calls.
-                    await refreshMe();
-                }
-                setJwtUiState();
-                if (getAccessToken()) {
-                    await viewTasks();
-                    await loadShortcutTokenStatus();
-                } else {
-                    document.getElementById('tasks').innerHTML = '<p>Sign in to load tasks.</p>';
-                }
+                // initGoogleSignIn() calls syncSessionOnLoad() when a token exists.
+                // If not signed in, it will show signed-out UI.
             };
         </script>
     </body>

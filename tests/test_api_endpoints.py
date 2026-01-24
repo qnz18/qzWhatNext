@@ -234,5 +234,9 @@ class TestRootEndpoint:
         assert response.status_code == 200
         assert "text/html" in response.headers["content-type"]
         assert "qzWhatNext" in response.text
+        # Auth UI should be backend-validated (no "token present" optimistic state).
+        assert "Signed in (token present)." not in response.text
+        assert "Checking session..." in response.text
+        assert "Session expired. Please sign in again." in response.text
 
 
