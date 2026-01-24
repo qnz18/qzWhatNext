@@ -253,20 +253,20 @@ async def root():
         </div>
 
         <div class="section">
-            <h2>Actions</h2>
-            <button onclick="buildSchedule()">Build Schedule</button>
-            <button onclick="syncCalendar()">Sync to Google Calendar</button>
-            <button onclick="viewSchedule()">View Schedule</button>
-            <button onclick="viewTasks()">View All Tasks</button>
-        </div>
-
-        <div class="section">
             <h2>Tasks</h2>
             <div class="row">
                 <button onclick="viewTasks()">Refresh Tasks</button>
                 <span id="tasksUpdated" class="muted"></span>
             </div>
             <div id="tasks"></div>
+        </div>
+
+        <div class="section">
+            <h2>Actions</h2>
+            <button onclick="buildSchedule()">Build Schedule</button>
+            <button onclick="syncCalendar()">Sync to Google Calendar</button>
+            <button onclick="viewSchedule()">View Schedule</button>
+            <button onclick="viewTasks()">View All Tasks</button>
         </div>
         
         <div class="section">
