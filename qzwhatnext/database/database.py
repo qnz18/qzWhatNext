@@ -1,4 +1,9 @@
-"""Database connection and session management for qzWhatNext."""
+"""Database connection and session management for qzWhatNext.
+
+This module supports both:
+- Local SQLite (default for dev/MVP)
+- PostgreSQL (Cloud SQL in production) via `DATABASE_URL`
+"""
 
 import os
 from sqlalchemy import create_engine, event
@@ -9,25 +14,50 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Database URL - SQLite for MVP
+# Database URL - SQLite by default (local dev/MVP)
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./qzwhatnext.db")
 
-# Create engine
-connect_args = {}
-if "sqlite" in DATABASE_URL:
-    connect_args["check_same_thread"] = False
+def _is_sqlite_url(database_url: str) -> bool:
+    return "sqlite" in (database_url or "")
 
-engine = create_engine(
-    DATABASE_URL,
-    connect_args=connect_args,
-    echo=os.getenv("DEBUG", "False").lower() == "true"
-)
+
+def get_engine_kwargs(database_url: str) -> dict:
+    """Return deterministic create_engine kwargs for a DB URL.
+
+    This is separated to allow deterministic unit testing without connecting.
+    """
+    engine_kwargs: dict = {
+        "echo": os.getenv("DEBUG", "False").lower() == "true",
+        # Helps avoid stale DB connections (important for Cloud Run + Cloud SQL).
+        "pool_pre_ping": True,
+    }
+
+    if _is_sqlite_url(database_url):
+        # SQLite-specific setting required for FastAPI concurrency in a single process.
+        engine_kwargs["connect_args"] = {"check_same_thread": False}
+        return engine_kwargs
+
+    # Postgres (Cloud SQL) / other DBs:
+    # Keep pooling conservative to avoid exhausting Cloud SQL max connections.
+    # These values are intentionally small and can be tuned via env later if needed.
+    engine_kwargs["pool_size"] = int(os.getenv("DB_POOL_SIZE", "5"))
+    engine_kwargs["max_overflow"] = int(os.getenv("DB_MAX_OVERFLOW", "5"))
+    engine_kwargs["pool_timeout"] = int(os.getenv("DB_POOL_TIMEOUT_SEC", "30"))
+    return engine_kwargs
+
+
+def build_engine(database_url: str) -> Engine:
+    return create_engine(database_url, **get_engine_kwargs(database_url))
+
+
+# Create engine (module-level singleton)
+engine = build_engine(DATABASE_URL)
 
 
 @event.listens_for(Engine, "connect")
 def set_sqlite_pragmas(dbapi_conn, connection_record):
     """Set SQLite PRAGMA statements on connection for better concurrency and foreign key support."""
-    if "sqlite" in DATABASE_URL:
+    if _is_sqlite_url(DATABASE_URL):
         cursor = dbapi_conn.cursor()
         # Enable foreign keys (required for referential integrity)
         cursor.execute("PRAGMA foreign_keys=ON")
@@ -58,7 +88,7 @@ def ensure_legacy_schema_compat() -> None:
     introduced multi-user support, it may be missing `tasks.user_id`. SQLite
     `create_all()` does not alter existing tables, so we patch the column in place.
     """
-    if "sqlite" not in DATABASE_URL:
+    if not _is_sqlite_url(DATABASE_URL):
         return
 
     # Use raw DB-API connection for PRAGMA and ALTER TABLE
