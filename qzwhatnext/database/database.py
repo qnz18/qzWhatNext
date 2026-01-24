@@ -117,7 +117,27 @@ def get_db() -> Session:
 
 
 def init_db():
-    """Initialize database - create all tables."""
+    """Initialize database schema.
+
+    - SQLite (default dev): use `create_all()` and apply minimal legacy patches.
+    - PostgreSQL (Cloud SQL): prefer Alembic migrations for deterministic schema.
+      Enable by setting `RUN_MIGRATIONS=true` in the environment.
+    """
+    run_migrations = os.getenv("RUN_MIGRATIONS", "False").lower() == "true"
+    if run_migrations and not _is_sqlite_url(DATABASE_URL):
+        # Run Alembic migrations in-process (non-interactive).
+        # This keeps Cloud Run deployments simple; if multiple instances race, the
+        # migrations are idempotent at the DB level for our current use.
+        from alembic import command
+        from alembic.config import Config
+
+        alembic_cfg = Config(os.getenv("ALEMBIC_INI", "alembic.ini"))
+        # Ensure Alembic uses the same runtime DB URL.
+        alembic_cfg.set_main_option("sqlalchemy.url", DATABASE_URL)
+        command.upgrade(alembic_cfg, "head")
+        return
+
+    # Default behavior: create schema directly.
     Base.metadata.create_all(bind=engine)
     ensure_legacy_schema_compat()
 

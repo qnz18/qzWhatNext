@@ -52,8 +52,9 @@ jobs:
             --platform managed \
             --region $REGION \
             --allow-unauthenticated \
-            --set-env-vars "GOOGLE_OAUTH_CLIENT_ID=${{ secrets.GOOGLE_OAUTH_CLIENT_ID }},DATABASE_URL=sqlite:///./qzwhatnext.db" \
-            --set-secrets "JWT_SECRET_KEY=jwt-secret:latest" \
+            --add-cloudsql-instances "${{ secrets.CLOUDSQL_INSTANCE_CONNECTION_NAME }}" \
+            --set-env-vars "GOOGLE_OAUTH_CLIENT_ID=${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}" \
+            --set-secrets "JWT_SECRET_KEY=jwt-secret:latest,DATABASE_URL=${{ secrets.DATABASE_URL_SECRET_NAME }}:latest" \
             --memory 512Mi \
             --timeout 300 \
             --quiet

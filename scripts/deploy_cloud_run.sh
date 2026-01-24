@@ -13,6 +13,8 @@
 #   SERVICE_NAME (default: qzwhatnext)
 #   REGION       (default: us-central1)
 #   IMAGE_NAME   (default: $REGION-docker.pkg.dev/$PROJECT_ID/qzwhatnext/$SERVICE_NAME)
+#   CLOUDSQL_INSTANCE_CONNECTION_NAME   (Cloud SQL: PROJECT:REGION:INSTANCE)
+#   DATABASE_URL_SECRET_NAME            (Secret Manager secret name; default: database-url)
 
 set -euo pipefail
 
@@ -30,6 +32,8 @@ PROJECT_ID="${PROJECT_ID:-}"
 GOOGLE_OAUTH_CLIENT_ID="${GOOGLE_OAUTH_CLIENT_ID:-}"
 SERVICE_NAME="${SERVICE_NAME:-qzwhatnext}"
 REGION="${REGION:-us-central1}"
+CLOUDSQL_INSTANCE_CONNECTION_NAME="${CLOUDSQL_INSTANCE_CONNECTION_NAME:-}"
+DATABASE_URL_SECRET_NAME="${DATABASE_URL_SECRET_NAME:-database-url}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -91,16 +95,34 @@ echo "Pushing image: ${IMAGE_NAME}"
 docker push "${IMAGE_NAME}"
 
 echo "Deploying to Cloud Run service: ${SERVICE_NAME} (${REGION})"
-gcloud run deploy "${SERVICE_NAME}" \
-  --image "${IMAGE_NAME}" \
-  --platform managed \
-  --region "${REGION}" \
-  --allow-unauthenticated \
-  --set-env-vars "GOOGLE_OAUTH_CLIENT_ID=${GOOGLE_OAUTH_CLIENT_ID},DATABASE_URL=sqlite:///./qzwhatnext.db" \
-  --set-secrets "JWT_SECRET_KEY=jwt-secret:latest" \
-  --memory 512Mi \
-  --timeout 300 \
-  --quiet
+if [[ -n "${CLOUDSQL_INSTANCE_CONNECTION_NAME}" ]]; then
+  echo "Using Cloud SQL instance: ${CLOUDSQL_INSTANCE_CONNECTION_NAME}"
+  echo "Using Secret Manager DATABASE_URL secret: ${DATABASE_URL_SECRET_NAME}"
+
+  gcloud run deploy "${SERVICE_NAME}" \
+    --image "${IMAGE_NAME}" \
+    --platform managed \
+    --region "${REGION}" \
+    --allow-unauthenticated \
+    --add-cloudsql-instances "${CLOUDSQL_INSTANCE_CONNECTION_NAME}" \
+    --set-env-vars "GOOGLE_OAUTH_CLIENT_ID=${GOOGLE_OAUTH_CLIENT_ID}" \
+    --set-secrets "JWT_SECRET_KEY=jwt-secret:latest,DATABASE_URL=${DATABASE_URL_SECRET_NAME}:latest" \
+    --memory 512Mi \
+    --timeout 300 \
+    --quiet
+else
+  echo "No CLOUDSQL_INSTANCE_CONNECTION_NAME set; deploying with SQLite (ephemeral)."
+  gcloud run deploy "${SERVICE_NAME}" \
+    --image "${IMAGE_NAME}" \
+    --platform managed \
+    --region "${REGION}" \
+    --allow-unauthenticated \
+    --set-env-vars "GOOGLE_OAUTH_CLIENT_ID=${GOOGLE_OAUTH_CLIENT_ID},DATABASE_URL=sqlite:///./qzwhatnext.db" \
+    --set-secrets "JWT_SECRET_KEY=jwt-secret:latest" \
+    --memory 512Mi \
+    --timeout 300 \
+    --quiet
+fi
 
 echo "✅ Deployment complete. Service URL:"
 gcloud run services describe "${SERVICE_NAME}" --region "${REGION}" --format="value(status.url)"
