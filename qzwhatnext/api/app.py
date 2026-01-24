@@ -246,6 +246,10 @@ async def root():
             </div>
             <div id="authStatus" class="muted"></div>
             <div id="userInfo" class="muted"></div>
+            <div class="row" style="margin-top: 10px;">
+                <button id="copyJwtBtn" onclick="copyJwt()" disabled>Copy JWT</button>
+                <span id="jwtStatus" class="muted"></span>
+            </div>
         </div>
 
         <div class="section">
@@ -354,6 +358,10 @@ async def root():
                 } else {
                     localStorage.removeItem(ACCESS_TOKEN_KEY);
                 }
+                // Keep JWT UI in sync with auth state.
+                if (typeof setJwtUiState === 'function') {
+                    setJwtUiState();
+                }
             }
 
             function setAuthStatus(message) {
@@ -370,12 +378,58 @@ async def root():
                 // Token exists locally but is invalid/expired server-side.
                 // Clear it to keep UI state consistent with the backend.
                 setAccessToken(null);
+                setJwtUiState();
                 setUserInfo('');
                 setAuthStatus(message || 'Not signed in. Please sign in again.');
                 const tasksDiv = document.getElementById('tasks');
                 if (tasksDiv) tasksDiv.innerHTML = '<p>Not signed in. Click Sign in to load tasks.</p>';
                 const scheduleDiv = document.getElementById('schedule');
                 if (scheduleDiv) scheduleDiv.innerHTML = '';
+            }
+
+            function setJwtUiState() {
+                const btn = document.getElementById('copyJwtBtn');
+                const status = document.getElementById('jwtStatus');
+                if (!btn || !status) return;
+
+                const token = getAccessToken();
+                if (token) {
+                    btn.disabled = false;
+                    status.textContent = 'JWT ready (copy-only)';
+                } else {
+                    btn.disabled = true;
+                    status.textContent = 'Not signed in';
+                }
+            }
+
+            async function copyJwt() {
+                const status = document.getElementById('jwtStatus');
+                const token = getAccessToken();
+                if (!token) {
+                    if (status) status.textContent = 'Not signed in';
+                    return;
+                }
+
+                try {
+                    if (navigator.clipboard && navigator.clipboard.writeText) {
+                        await navigator.clipboard.writeText(token);
+                    } else {
+                        // Fallback for older browsers / non-clipboard contexts
+                        const el = document.createElement('textarea');
+                        el.value = token;
+                        el.setAttribute('readonly', '');
+                        el.style.position = 'absolute';
+                        el.style.left = '-9999px';
+                        document.body.appendChild(el);
+                        el.select();
+                        document.execCommand('copy');
+                        document.body.removeChild(el);
+                    }
+                    if (status) status.textContent = 'JWT copied to clipboard';
+                } catch (e) {
+                    if (status) status.textContent = 'Copy failed';
+                    console.error('Copy JWT failed:', e);
+                }
             }
 
             async function apiFetch(path, options = {}) {
@@ -436,6 +490,7 @@ async def root():
                     setAccessToken(data.access_token);
                     setAuthStatus('Signed in.');
                     await refreshMe();
+                    setJwtUiState();
                     await viewTasks();
                 } catch (e) {
                     console.error('Auth error:', e);
@@ -479,10 +534,12 @@ async def root():
                 if (!getAccessToken()) {
                     setAuthStatus('Not signed in.');
                 }
+                setJwtUiState();
             }
 
             function signOut() {
                 setAccessToken(null);
+                setJwtUiState();
                 setAuthStatus('Signed out.');
                 setUserInfo('');
                 document.getElementById('tasks').innerHTML = '<p>Signed out. Sign in to load tasks.</p>';
@@ -719,6 +776,7 @@ async def root():
                     // Validate token before trying other authenticated calls.
                     await refreshMe();
                 }
+                setJwtUiState();
                 if (getAccessToken()) {
                     await viewTasks();
                     await loadShortcutTokenStatus();
