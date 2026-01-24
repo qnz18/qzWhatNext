@@ -146,7 +146,7 @@ python run.py
 The API will be available at `http://localhost:8000`
 API documentation at `http://localhost:8000/docs`
 
-**Note:** Tasks are persisted in SQLite database (`qzwhatnext.db`). The database is automatically created on first run.
+**Note:** By default, tasks are persisted in a local SQLite database (`qzwhatnext.db`). For production persistence, set `DATABASE_URL` to PostgreSQL (e.g., Cloud SQL).
 
 ## Suggested repo layout
 

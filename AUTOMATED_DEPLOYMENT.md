@@ -94,6 +94,25 @@ scripts/setup_gcp_github_actions.sh --project qzwhatnext --create-jwt-secret
 - Name: `GOOGLE_OAUTH_CLIENT_ID`
 - Value: Your Google OAuth Client ID (from Google Cloud Console)
 
+**(Cloud SQL) CLOUDSQL_INSTANCE_CONNECTION_NAME:**
+- Name: `CLOUDSQL_INSTANCE_CONNECTION_NAME`
+- Value: Your Cloud SQL instance connection name (format: `PROJECT:REGION:INSTANCE`)
+
+**(Cloud SQL) DATABASE_URL_SECRET_NAME:**
+- Name: `DATABASE_URL_SECRET_NAME`
+- Value: Secret Manager secret name containing the full `DATABASE_URL` (recommended default: `database-url`)
+
+#### Step 2.5: Create Secret Manager `DATABASE_URL` (Cloud SQL only)
+
+If you are using Cloud SQL Postgres, store the full `DATABASE_URL` in Secret Manager (keeps DB password out of GitHub Secrets):
+
+```bash
+# Example format (Cloud Run unix socket):
+# postgresql+psycopg://USER:PASSWORD@/DB_NAME?host=/cloudsql/INSTANCE_CONNECTION_NAME
+export DATABASE_URL="postgresql+psycopg://USER:PASSWORD@/DB_NAME?host=/cloudsql/PROJECT:REGION:INSTANCE"
+printf "%s" "$DATABASE_URL" | gcloud secrets create database-url --data-file=-
+```
+
 #### Step 3: Ensure Workflow File Exists
 
 The workflow file should already be in `.github/workflows/deploy.yml`. If not, see the file for the workflow configuration.
@@ -153,8 +172,9 @@ steps:
       - '--platform=managed'
       - '--region=us-central1'
       - '--allow-unauthenticated'
-      - '--set-env-vars=GOOGLE_OAUTH_CLIENT_ID=${_GOOGLE_OAUTH_CLIENT_ID},DATABASE_URL=sqlite:///./qzwhatnext.db'
-      - '--set-secrets=JWT_SECRET_KEY=jwt-secret:latest'
+      - '--add-cloudsql-instances=${_CLOUDSQL_INSTANCE_CONNECTION_NAME}'
+      - '--set-env-vars=GOOGLE_OAUTH_CLIENT_ID=${_GOOGLE_OAUTH_CLIENT_ID}'
+      - '--set-secrets=JWT_SECRET_KEY=jwt-secret:latest,DATABASE_URL=${_DATABASE_URL_SECRET_NAME}:latest'
       - '--memory=512Mi'
       - '--timeout=300'
 
@@ -163,6 +183,8 @@ images:
 
 substitutions:
   _GOOGLE_OAUTH_CLIENT_ID: 'your-client-id.apps.googleusercontent.com'
+  _CLOUDSQL_INSTANCE_CONNECTION_NAME: 'PROJECT:REGION:INSTANCE'
+  _DATABASE_URL_SECRET_NAME: 'database-url'
 EOF
 
 # Create trigger
@@ -210,8 +232,9 @@ gcloud run deploy $SERVICE_NAME \
   --platform managed \
   --region $REGION \
   --allow-unauthenticated \
-  --set-env-vars "GOOGLE_OAUTH_CLIENT_ID=$GOOGLE_OAUTH_CLIENT_ID,DATABASE_URL=sqlite:///./qzwhatnext.db" \
-  --set-secrets "JWT_SECRET_KEY=jwt-secret:latest" \
+  --add-cloudsql-instances "$CLOUDSQL_INSTANCE_CONNECTION_NAME" \
+  --set-env-vars "GOOGLE_OAUTH_CLIENT_ID=$GOOGLE_OAUTH_CLIENT_ID" \
+  --set-secrets "JWT_SECRET_KEY=jwt-secret:latest,DATABASE_URL=${DATABASE_URL_SECRET_NAME:-database-url}:latest" \
   --memory 512Mi \
   --timeout 300
 

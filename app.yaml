@@ -18,6 +18,9 @@ env_variables:
   
   # Database (optional, defaults to SQLite)
   # DATABASE_URL: sqlite:///./qzwhatnext.db
+  # For Postgres (e.g., Cloud SQL), set DATABASE_URL to a postgres URL.
+  # Example (Cloud Run unix socket style):
+  # DATABASE_URL: postgresql+psycopg://USER:PASSWORD@/DB_NAME?host=/cloudsql/INSTANCE_CONNECTION_NAME
   
   # AI inference (optional)
   # OPENAI_API_KEY: your-openai-api-key  # Use Secret Manager in production

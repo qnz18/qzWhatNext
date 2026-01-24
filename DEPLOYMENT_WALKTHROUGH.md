@@ -207,16 +207,11 @@ Choose one option:
 
 **No action needed** - this is the default. Just note that data won't persist.
 
-### Option B: SQLite with Cloud Storage Volume (Minimal Production) ✅ Recommended
+### Option B: SQLite with Cloud Storage Volume (Deprecated) ⚠️
 
-**Pros:** Data persists, very low cost (~$0.05/month)
-**Cons:** Single instance only, no horizontal scaling
+Historically, this walkthrough mentioned mounting a Cloud Storage bucket into Cloud Run to persist a SQLite file.
 
-**When to use:** Personal use, single user or small team
-
-**Setup (we'll do this in deployment step):**
-- We'll create a Cloud Storage bucket
-- Mount it as a volume in Cloud Run
+**Status:** Not recommended / not covered. Use Cloud SQL (Option C) for persistence on Cloud Run.
 
 ### Option C: Cloud SQL PostgreSQL (Production)
 
@@ -225,9 +220,9 @@ Choose one option:
 
 **When to use:** Multiple users, production environment
 
-**Setup:** Not covered in this minimal walkthrough (see Cloud SQL docs)
+**Setup (covered below):** Create Cloud SQL, store `DATABASE_URL` in Secret Manager, and attach the instance to Cloud Run.
 
-**For now, we'll use Option B (Cloud Storage volume).**
+**For persistent storage on Cloud Run, use Option C (Cloud SQL Postgres).**
 
 ---
 
@@ -250,14 +245,33 @@ export REGION=us-central1
 export SERVICE_NAME=qzwhatnext
 ```
 
-### 5.2 Create Cloud Storage Bucket (if using Option B)
+### 5.2 Create Cloud SQL PostgreSQL (if using Option C)
 
 ```bash
-# Create bucket for SQLite database (if using persistent storage)
-gsutil mb -p $PROJECT_ID -l $REGION gs://$PROJECT_ID-sqlite-data
+# Enable Cloud SQL Admin API
+gcloud services enable sqladmin.googleapis.com --project "$PROJECT_ID"
 
-# Make bucket private (recommended)
-gsutil iam ch allUsers:objectViewer gs://$PROJECT_ID-sqlite-data  # Remove public access
+# Create a Postgres instance (pick a name)
+export CLOUDSQL_INSTANCE=qzwhatnext-postgres
+gcloud sql instances create "$CLOUDSQL_INSTANCE" \
+  --database-version=POSTGRES_15 \
+  --region="$REGION" \
+  --cpu=1 \
+  --memory=3840MiB \
+  --storage-size=10GB \
+  --project="$PROJECT_ID"
+
+# Create a database + user (pick values)
+export DB_NAME=qzwhatnext
+export DB_USER=qzwhatnext
+export DB_PASSWORD='REPLACE_WITH_STRONG_PASSWORD'
+
+gcloud sql databases create "$DB_NAME" --instance="$CLOUDSQL_INSTANCE" --project="$PROJECT_ID"
+gcloud sql users create "$DB_USER" --instance="$CLOUDSQL_INSTANCE" --password="$DB_PASSWORD" --project="$PROJECT_ID"
+
+# Get the instance connection name (needed for Cloud Run)
+export INSTANCE_CONNECTION_NAME="$(gcloud sql instances describe "$CLOUDSQL_INSTANCE" --project "$PROJECT_ID" --format='value(connectionName)')"
+echo "$INSTANCE_CONNECTION_NAME"
 ```
 
 ### 5.3 Build Docker Image
@@ -305,9 +319,51 @@ gcloud run deploy $SERVICE_NAME \
   --set-secrets "JWT_SECRET_KEY=jwt-secret:latest"
 ```
 
-**⚠️ Note:** Cloud Storage volume mounts are NOT supported in standard Cloud Run (managed). They require Cloud Run 2nd gen or Cloud Run for Anthos, which are more complex setups. For this walkthrough, use Option A below.
+### Option C (Cloud SQL Postgres - Persistent Storage)
 
-**For Option A (Ephemeral Storage - Recommended for this walkthrough):**
+1) Store `DATABASE_URL` in Secret Manager (recommended: keep DB password out of env vars):
+
+```bash
+# Create a secret containing the full DB URL (no newlines)
+export DATABASE_URL="postgresql+psycopg://$DB_USER:$DB_PASSWORD@/$DB_NAME?host=/cloudsql/$INSTANCE_CONNECTION_NAME"
+printf "%s" "$DATABASE_URL" | gcloud secrets create database-url --data-file=- --project "$PROJECT_ID"
+
+# If the secret already exists, add a new version instead:
+# printf "%s" "$DATABASE_URL" | gcloud secrets versions add database-url --data-file=- --project "$PROJECT_ID"
+```
+
+2) Grant Cloud Run service account access (Secret Manager + Cloud SQL):
+
+```bash
+PROJECT_NUMBER="$(gcloud projects describe "$PROJECT_ID" --format="value(projectNumber)")"
+RUN_SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
+
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  --member="serviceAccount:${RUN_SA}" \
+  --role="roles/cloudsql.client"
+
+gcloud secrets add-iam-policy-binding database-url \
+  --member="serviceAccount:${RUN_SA}" \
+  --role="roles/secretmanager.secretAccessor" \
+  --project "$PROJECT_ID"
+```
+
+3) Deploy (attach Cloud SQL + source `DATABASE_URL` from Secret Manager):
+
+```bash
+gcloud run deploy $SERVICE_NAME \
+  --image $REGION-docker.pkg.dev/$PROJECT_ID/qzwhatnext/$SERVICE_NAME \
+  --platform managed \
+  --region $REGION \
+  --allow-unauthenticated \
+  --add-cloudsql-instances "$INSTANCE_CONNECTION_NAME" \
+  --set-env-vars "GOOGLE_OAUTH_CLIENT_ID=$GOOGLE_OAUTH_CLIENT_ID" \
+  --set-secrets "JWT_SECRET_KEY=jwt-secret:latest,DATABASE_URL=database-url:latest" \
+  --memory 512Mi \
+  --timeout 300
+```
+
+**For Option A (Ephemeral Storage - Recommended for quick testing):**
 ```bash
 gcloud run deploy $SERVICE_NAME \
   --image $REGION-docker.pkg.dev/$PROJECT_ID/qzwhatnext/$SERVICE_NAME \
