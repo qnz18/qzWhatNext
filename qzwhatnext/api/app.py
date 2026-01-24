@@ -259,12 +259,7 @@ async def root():
             <button onclick="viewSchedule()">View Schedule</button>
             <button onclick="viewTasks()">View All Tasks</button>
         </div>
-        
-        <div class="section">
-            <h2>Status</h2>
-            <div id="status"></div>
-        </div>
-        
+
         <div class="section">
             <h2>Tasks</h2>
             <div class="row">
@@ -343,6 +338,11 @@ async def root():
             </div>
             <div id="shortcutTokenStatus" class="muted"></div>
             <pre id="shortcutTokenValue" style="white-space: pre-wrap;"></pre>
+        </div>
+
+        <div class="section">
+            <h2>Status</h2>
+            <div id="status"></div>
         </div>
         
         <script>
