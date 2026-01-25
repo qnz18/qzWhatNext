@@ -848,8 +848,23 @@ async def root():
                     const tasksUpdated = document.getElementById('tasksUpdated');
                     if (tasksUpdated && !isStale(version)) tasksUpdated.textContent = 'Refreshing...';
                     const response = await apiFetch('/tasks', {}, version);
-                    const data = await response.json();
+                    let data = null;
+                    try {
+                        data = await response.json();
+                    } catch (e) {
+                        // Non-JSON error response (or network issue)
+                        throw new Error(`Failed to load tasks (HTTP ${response.status})`);
+                    }
                     if (isStale(version)) return;
+
+                    if (!response.ok) {
+                        const detail = (data && data.detail) ? String(data.detail) : `Failed to load tasks (HTTP ${response.status})`;
+                        throw new Error(detail);
+                    }
+
+                    if (!data || !Array.isArray(data.tasks)) {
+                        throw new Error('Unexpected response from /tasks');
+                    }
                     
                     if (data.tasks.length === 0) {
                         selectedTaskIds.clear();
