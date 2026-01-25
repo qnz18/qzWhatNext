@@ -249,6 +249,12 @@ async def root():
             .task-select { width: auto; margin: 0; }
             th.select-col, td.select-col { width: 44px; text-align: center; }
             #tasksUpdated { display: inline-block; }
+            .tasks-actions { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+            .tasks-actions label { white-space: nowrap; flex: 0 0 auto; }
+            @media (max-width: 520px) {
+                .tasks-actions { flex-direction: column; align-items: stretch; }
+                .tasks-actions button { width: 100%; }
+            }
         </style>
     </head>
     <body>
@@ -275,7 +281,7 @@ async def root():
                 <button onclick="viewTasks()">Refresh Tasks</button>
                 <span id="tasksUpdated" class="muted wrap"></span>
             </div>
-            <div class="row">
+            <div class="tasks-actions">
                 <label style="display: inline-flex; align-items: center; gap: 6px; font-weight: normal; margin-top: 0;">
                     <input type="checkbox" id="selectAllTasks" onchange="toggleSelectAllTasks(this.checked)">
                     Select all
