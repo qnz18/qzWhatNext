@@ -126,6 +126,116 @@ class TestTaskEndpoints:
         get_response = test_client.get(f"/tasks/{task_id}")
         assert get_response.status_code == 404
 
+        # Verify it is not included in list
+        list_response = test_client.get("/tasks")
+        assert list_response.status_code == 200
+        ids = [t["id"] for t in list_response.json()["tasks"]]
+        assert task_id not in ids
+
+    def test_restore_task(self, test_client):
+        """Test POST /tasks/{task_id}/restore endpoint."""
+        create_response = test_client.post(
+            "/tasks",
+            json={"title": "Restore Me", "category": "unknown"}
+        )
+        task_id = create_response.json()["task"]["id"]
+
+        delete_response = test_client.delete(f"/tasks/{task_id}")
+        assert delete_response.status_code == 204
+
+        restore_response = test_client.post(f"/tasks/{task_id}/restore")
+        assert restore_response.status_code == 200
+        restored = restore_response.json()["task"]
+        assert restored["id"] == task_id
+
+        # Verify it's visible again
+        get_response = test_client.get(f"/tasks/{task_id}")
+        assert get_response.status_code == 200
+
+    def test_purge_task(self, test_client):
+        """Test DELETE /tasks/{task_id}/purge endpoint."""
+        create_response = test_client.post(
+            "/tasks",
+            json={"title": "Purge Me", "category": "unknown"}
+        )
+        task_id = create_response.json()["task"]["id"]
+
+        purge_response = test_client.delete(f"/tasks/{task_id}/purge")
+        assert purge_response.status_code == 204
+
+        # Verify it can't be fetched
+        get_response = test_client.get(f"/tasks/{task_id}")
+        assert get_response.status_code == 404
+
+        # Verify restore fails
+        restore_response = test_client.post(f"/tasks/{task_id}/restore")
+        assert restore_response.status_code == 404
+
+    def test_bulk_delete_restore_and_purge(self, test_client):
+        """Test bulk task soft delete, restore, and purge endpoints."""
+        ids = []
+        for title in ["Bulk A", "Bulk B", "Bulk C"]:
+            resp = test_client.post("/tasks", json={"title": title, "category": "unknown"})
+            assert resp.status_code == 201
+            ids.append(resp.json()["task"]["id"])
+
+        nonexistent_id = "nonexistent-id"
+
+        bulk_delete = test_client.post("/tasks/bulk_delete", json={"task_ids": [ids[0], ids[1], nonexistent_id]})
+        assert bulk_delete.status_code == 200
+        payload = bulk_delete.json()
+        assert payload["affected_count"] == 2
+        assert nonexistent_id in payload["not_found_ids"]
+
+        # Deleted tasks should 404
+        assert test_client.get(f"/tasks/{ids[0]}").status_code == 404
+        assert test_client.get(f"/tasks/{ids[1]}").status_code == 404
+        assert test_client.get(f"/tasks/{ids[2]}").status_code == 200
+
+        bulk_restore = test_client.post("/tasks/bulk_restore", json={"task_ids": [ids[0], ids[1]]})
+        assert bulk_restore.status_code == 200
+        assert bulk_restore.json()["affected_count"] == 2
+
+        assert test_client.get(f"/tasks/{ids[0]}").status_code == 200
+        assert test_client.get(f"/tasks/{ids[1]}").status_code == 200
+
+        bulk_purge = test_client.post("/tasks/bulk_purge", json={"task_ids": [ids[0], ids[2], nonexistent_id]})
+        assert bulk_purge.status_code == 200
+        payload = bulk_purge.json()
+        assert payload["affected_count"] == 2
+        assert nonexistent_id in payload["not_found_ids"]
+
+        assert test_client.get(f"/tasks/{ids[0]}").status_code == 404
+        assert test_client.get(f"/tasks/{ids[2]}").status_code == 404
+
+    def test_delete_removes_scheduled_blocks(self, test_client):
+        """Deleting a task should remove its scheduled blocks."""
+        create_response = test_client.post(
+            "/tasks",
+            json={"title": "Scheduled Then Deleted", "category": "work", "estimated_duration_min": 30}
+        )
+        task_id = create_response.json()["task"]["id"]
+
+        build_response = test_client.post("/schedule")
+        assert build_response.status_code == 200
+
+        schedule_before = test_client.get("/schedule")
+        assert schedule_before.status_code == 200
+        blocks_before = schedule_before.json()["scheduled_blocks"]
+        assert any(b["entity_id"] == task_id for b in blocks_before)
+
+        delete_response = test_client.delete(f"/tasks/{task_id}")
+        assert delete_response.status_code == 204
+
+        schedule_after = test_client.get("/schedule")
+        # If the deleted task was the only scheduled entity, schedule may now be empty.
+        # Existing API semantics return 404 when no schedule is available.
+        if schedule_after.status_code == 404:
+            return
+        assert schedule_after.status_code == 200
+        blocks_after = schedule_after.json()["scheduled_blocks"]
+        assert all(b["entity_id"] != task_id for b in blocks_after)
+
 
 class TestAddSmartEndpoint:
     """Test POST /tasks/add_smart endpoint."""

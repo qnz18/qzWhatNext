@@ -656,6 +656,21 @@ AI inference improves user experience by automatically categorizing tasks, gener
 
 ---
 
+## D-036 — Task Deletion Is Soft Delete by Default (MVP)
+
+**Decision:**  
+Task deletion defaults to **soft delete** (set `deleted_at`), with explicit endpoints for **restore** (clear `deleted_at`) and **purge** (permanent deletion).
+
+**Rationale:**  
+The system’s trust contract requires actions to be reversible. Soft delete supports user mistakes and makes deletions undoable, while purge remains available for irreversible cleanup.
+
+**Implications:**  
+- `DELETE /tasks/{task_id}` performs soft delete\n+- Soft-deleted tasks are hidden from task reads and scheduling\n+- Restore endpoints re-activate soft-deleted tasks\n+- Purge endpoints permanently remove tasks\n+- ScheduledBlocks referencing deleted/purged tasks must be removed to avoid orphaned schedule entries
+
+**Status:** Locked
+
+---
+
 ## Canonical Rule
 
 If a future behavior conflicts with a decision in this log:

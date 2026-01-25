@@ -113,6 +113,55 @@ class TestTaskRepository:
         # Verify task is deleted
         retrieved = task_repository.get(test_user_id, task_id)
         assert retrieved is None
+
+    def test_restore_task(self, task_repository, sample_task, test_user_id):
+        """Test restoring a soft-deleted task."""
+        created = task_repository.create(sample_task)
+        task_id = created.id
+
+        assert task_repository.delete(test_user_id, task_id) is True
+        assert task_repository.get(test_user_id, task_id) is None
+
+        assert task_repository.restore(test_user_id, task_id) is True
+        restored = task_repository.get(test_user_id, task_id)
+        assert restored is not None
+        assert restored.id == task_id
+
+    def test_purge_task(self, task_repository, sample_task, test_user_id):
+        """Test permanently deleting a task."""
+        created = task_repository.create(sample_task)
+        task_id = created.id
+
+        assert task_repository.purge(test_user_id, task_id) is True
+        assert task_repository.get(test_user_id, task_id) is None
+        assert task_repository.restore(test_user_id, task_id) is False
+
+    def test_bulk_delete_restore_and_purge(self, task_repository, sample_task_base, test_user_id):
+        """Test bulk soft-delete/restore/purge methods."""
+        ids = []
+        for title in ["Bulk 1", "Bulk 2", "Bulk 3"]:
+            task = Task(**{**sample_task_base, "id": str(uuid.uuid4()), "title": title})
+            created = task_repository.create(task)
+            ids.append(created.id)
+
+        nonexistent_id = "nonexistent-id"
+
+        result = task_repository.bulk_delete(test_user_id, [ids[0], ids[1], nonexistent_id])
+        assert result["affected_count"] == 2
+        assert nonexistent_id in result["not_found_ids"]
+        assert task_repository.get(test_user_id, ids[0]) is None
+        assert task_repository.get(test_user_id, ids[1]) is None
+        assert task_repository.get(test_user_id, ids[2]) is not None
+
+        result = task_repository.bulk_restore(test_user_id, [ids[0], ids[1]])
+        assert result["affected_count"] == 2
+        assert task_repository.get(test_user_id, ids[0]) is not None
+        assert task_repository.get(test_user_id, ids[1]) is not None
+
+        result = task_repository.bulk_purge(test_user_id, [ids[0], ids[2], nonexistent_id])
+        assert result["affected_count"] == 2
+        assert task_repository.get(test_user_id, ids[0]) is None
+        assert task_repository.get(test_user_id, ids[2]) is None
     
     def test_delete_nonexistent_task(self, task_repository, test_user_id):
         """Test deleting a nonexistent task returns False."""

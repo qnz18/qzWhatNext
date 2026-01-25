@@ -69,6 +69,7 @@ class TaskDB(Base):
     # Timestamps
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    deleted_at = Column(DateTime, nullable=True, index=True)
     
     # Scheduling fields
     deadline = Column(DateTime, nullable=True)
@@ -127,6 +128,7 @@ class TaskDB(Base):
             status=value_to_enum(self.status, TaskStatus, TaskStatus.OPEN),
             created_at=self.created_at,
             updated_at=self.updated_at,
+            deleted_at=self.deleted_at,
             deadline=self.deadline,
             estimated_duration_min=self.estimated_duration_min,
             duration_confidence=self.duration_confidence,
@@ -165,6 +167,7 @@ class TaskDB(Base):
             status=status_value,
             created_at=task.created_at,
             updated_at=task.updated_at,
+            deleted_at=task.deleted_at,
             deadline=task.deadline,
             estimated_duration_min=task.estimated_duration_min,
             duration_confidence=task.duration_confidence,

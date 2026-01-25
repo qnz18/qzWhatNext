@@ -50,6 +50,7 @@ A Task has the following fields:
 - status: open | completed
 - created_at: datetime
 - updated_at: datetime
+- deleted_at: datetime or null (soft-delete timestamp; null means active)
 - deadline: datetime or null
 - estimated_duration_min: integer
 - duration_confidence: float (0–1)
@@ -70,6 +71,13 @@ A Task has the following fields:
 - Source metadata (source_type, source_id) is metadata only, preserved for future bidirectional sync
 - Tasks can be created directly via API (source_type="api", source_id=null)
 - Source metadata enables deduplication and future bidirectional sync
+
+**Task Deletion and Reversibility (MVP):**
+- Default deletion is **soft delete** by setting `deleted_at`
+- Soft-deleted tasks are treated as **non-existent** for reads, ranking, and scheduling
+- Soft-deleted tasks may be **restored** by clearing `deleted_at`
+- Permanent deletion is an explicit **purge** operation (irreversible)
+- When a task is deleted or purged, any ScheduledBlocks that reference it must be removed to keep the schedule consistent
 
 **Task ID Generation:**
 - Task IDs are generated as UUIDs (v4)

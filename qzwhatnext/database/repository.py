@@ -1,7 +1,8 @@
 """Repository layer for database operations."""
 
 import logging
-from typing import List, Optional
+from datetime import datetime
+from typing import List, Optional, Dict, Set
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, desc
 
@@ -16,6 +17,16 @@ class TaskRepository:
     
     def __init__(self, db: Session):
         self.db = db
+
+    def _as_unique_ids(self, task_ids: List[str]) -> List[str]:
+        """Deduplicate while preserving order."""
+        seen: Set[str] = set()
+        unique: List[str] = []
+        for task_id in task_ids:
+            if task_id not in seen:
+                seen.add(task_id)
+                unique.append(task_id)
+        return unique
     
     def create(self, task: Task) -> Task:
         """Create a new task."""
@@ -35,14 +46,16 @@ class TaskRepository:
         """Get task by ID for a specific user."""
         task_db = self.db.query(TaskDB).filter(
             TaskDB.id == task_id,
-            TaskDB.user_id == user_id
+            TaskDB.user_id == user_id,
+            TaskDB.deleted_at.is_(None),
         ).first()
         return task_db.to_pydantic() if task_db else None
     
     def get_all(self, user_id: str) -> List[Task]:
         """Get all tasks for a user sorted by creation date (newest first)."""
         tasks_db = self.db.query(TaskDB).filter(
-            TaskDB.user_id == user_id
+            TaskDB.user_id == user_id,
+            TaskDB.deleted_at.is_(None),
         ).order_by(desc(TaskDB.created_at)).all()
         return [task_db.to_pydantic() for task_db in tasks_db]
     
@@ -50,7 +63,8 @@ class TaskRepository:
         """Get all open (non-completed) tasks for a user."""
         tasks_db = self.db.query(TaskDB).filter(
             TaskDB.user_id == user_id,
-            TaskDB.status == "open"
+            TaskDB.status == "open",
+            TaskDB.deleted_at.is_(None),
         ).all()
         return [task_db.to_pydantic() for task_db in tasks_db]
     
@@ -58,7 +72,8 @@ class TaskRepository:
         """Update an existing task (user_id must match task.user_id)."""
         task_db = self.db.query(TaskDB).filter(
             TaskDB.id == task.id,
-            TaskDB.user_id == task.user_id
+            TaskDB.user_id == task.user_id,
+            TaskDB.deleted_at.is_(None),
         ).first()
         if not task_db:
             raise ValueError(f"Task {task.id} not found")
@@ -100,22 +115,170 @@ class TaskRepository:
             raise
     
     def delete(self, user_id: str, task_id: str) -> bool:
-        """Delete a task by ID for a specific user."""
+        """Soft-delete a task by ID for a specific user."""
         task_db = self.db.query(TaskDB).filter(
             TaskDB.id == task_id,
-            TaskDB.user_id == user_id
+            TaskDB.user_id == user_id,
+            TaskDB.deleted_at.is_(None),
         ).first()
         if not task_db:
             return False
         
         try:
-            self.db.delete(task_db)
+            task_db.deleted_at = datetime.utcnow()
             self.db.commit()
-            logger.debug(f"Deleted task {task_id}")
+            logger.debug(f"Soft-deleted task {task_id}")
             return True
         except Exception as e:
             self.db.rollback()
-            logger.error(f"Failed to delete task {task_id}: {type(e).__name__}: {str(e)}")
+            logger.error(f"Failed to soft-delete task {task_id}: {type(e).__name__}: {str(e)}")
+            raise
+
+    def restore(self, user_id: str, task_id: str) -> bool:
+        """Restore a soft-deleted task by ID for a specific user."""
+        task_db = self.db.query(TaskDB).filter(
+            TaskDB.id == task_id,
+            TaskDB.user_id == user_id,
+        ).first()
+        if not task_db:
+            return False
+
+        # Idempotent restore: if it's already active, treat as success
+        if task_db.deleted_at is None:
+            return True
+
+        try:
+            task_db.deleted_at = None
+            self.db.commit()
+            logger.debug(f"Restored task {task_id}")
+            return True
+        except Exception as e:
+            self.db.rollback()
+            logger.error(f"Failed to restore task {task_id}: {type(e).__name__}: {str(e)}")
+            raise
+
+    def purge(self, user_id: str, task_id: str) -> bool:
+        """Permanently delete a task by ID for a specific user."""
+        task_db = self.db.query(TaskDB).filter(
+            TaskDB.id == task_id,
+            TaskDB.user_id == user_id,
+        ).first()
+        if not task_db:
+            return False
+
+        try:
+            self.db.delete(task_db)
+            self.db.commit()
+            logger.debug(f"Purged task {task_id}")
+            return True
+        except Exception as e:
+            self.db.rollback()
+            logger.error(f"Failed to purge task {task_id}: {type(e).__name__}: {str(e)}")
+            raise
+
+    def bulk_delete(self, user_id: str, task_ids: List[str]) -> Dict[str, object]:
+        """Soft-delete multiple tasks for a user.
+
+        Only active (non-deleted) tasks are soft-deleted. Already-deleted tasks are treated as not found.
+        """
+        unique_ids = self._as_unique_ids(task_ids)
+        if not unique_ids:
+            return {"affected_count": 0, "not_found_ids": []}
+
+        active_ids = {
+            row[0]
+            for row in self.db.query(TaskDB.id).filter(
+                TaskDB.user_id == user_id,
+                TaskDB.id.in_(unique_ids),
+                TaskDB.deleted_at.is_(None),
+            ).all()
+        }
+        not_found_ids = [task_id for task_id in unique_ids if task_id not in active_ids]
+
+        try:
+            affected = (
+                self.db.query(TaskDB)
+                .filter(
+                    TaskDB.user_id == user_id,
+                    TaskDB.id.in_(list(active_ids)),
+                    TaskDB.deleted_at.is_(None),
+                )
+                .update({TaskDB.deleted_at: datetime.utcnow()}, synchronize_session=False)
+            )
+            self.db.commit()
+            logger.debug(f"Soft-deleted {affected} tasks for user {user_id}")
+            return {"affected_count": int(affected), "not_found_ids": not_found_ids}
+        except Exception as e:
+            self.db.rollback()
+            logger.error(f"Failed to bulk soft-delete tasks for user {user_id}: {type(e).__name__}: {str(e)}")
+            raise
+
+    def bulk_restore(self, user_id: str, task_ids: List[str]) -> Dict[str, object]:
+        """Restore multiple tasks for a user.
+
+        Restores tasks that exist and are currently soft-deleted. Active tasks are left unchanged.
+        """
+        unique_ids = self._as_unique_ids(task_ids)
+        if not unique_ids:
+            return {"affected_count": 0, "not_found_ids": []}
+
+        existing_ids = {
+            row[0]
+            for row in self.db.query(TaskDB.id).filter(
+                TaskDB.user_id == user_id,
+                TaskDB.id.in_(unique_ids),
+            ).all()
+        }
+        not_found_ids = [task_id for task_id in unique_ids if task_id not in existing_ids]
+
+        try:
+            affected = (
+                self.db.query(TaskDB)
+                .filter(
+                    TaskDB.user_id == user_id,
+                    TaskDB.id.in_(list(existing_ids)),
+                    TaskDB.deleted_at.is_not(None),
+                )
+                .update({TaskDB.deleted_at: None}, synchronize_session=False)
+            )
+            self.db.commit()
+            logger.debug(f"Restored {affected} tasks for user {user_id}")
+            return {"affected_count": int(affected), "not_found_ids": not_found_ids}
+        except Exception as e:
+            self.db.rollback()
+            logger.error(f"Failed to bulk restore tasks for user {user_id}: {type(e).__name__}: {str(e)}")
+            raise
+
+    def bulk_purge(self, user_id: str, task_ids: List[str]) -> Dict[str, object]:
+        """Permanently delete multiple tasks for a user."""
+        unique_ids = self._as_unique_ids(task_ids)
+        if not unique_ids:
+            return {"affected_count": 0, "not_found_ids": []}
+
+        existing_ids = {
+            row[0]
+            for row in self.db.query(TaskDB.id).filter(
+                TaskDB.user_id == user_id,
+                TaskDB.id.in_(unique_ids),
+            ).all()
+        }
+        not_found_ids = [task_id for task_id in unique_ids if task_id not in existing_ids]
+
+        try:
+            affected = (
+                self.db.query(TaskDB)
+                .filter(
+                    TaskDB.user_id == user_id,
+                    TaskDB.id.in_(list(existing_ids)),
+                )
+                .delete(synchronize_session=False)
+            )
+            self.db.commit()
+            logger.debug(f"Purged {affected} tasks for user {user_id}")
+            return {"affected_count": int(affected), "not_found_ids": not_found_ids}
+        except Exception as e:
+            self.db.rollback()
+            logger.error(f"Failed to bulk purge tasks for user {user_id}: {type(e).__name__}: {str(e)}")
             raise
     
     def find_duplicates(self, user_id: str, source_type: str, source_id: Optional[str], title: str) -> List[Task]:
@@ -123,7 +286,8 @@ class TaskRepository:
         conditions = [
             TaskDB.user_id == user_id,
             TaskDB.source_type == source_type,
-            TaskDB.title == title
+            TaskDB.title == title,
+            TaskDB.deleted_at.is_(None),
         ]
         if source_id:
             conditions.append(TaskDB.source_id == source_id)

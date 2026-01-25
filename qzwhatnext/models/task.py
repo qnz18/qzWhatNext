@@ -44,6 +44,7 @@ class Task(BaseModel):
     status: TaskStatus = Field(TaskStatus.OPEN, description="Task status")
     created_at: datetime = Field(..., description="Task creation timestamp")
     updated_at: datetime = Field(..., description="Task last update timestamp")
+    deleted_at: Optional[datetime] = Field(None, description="Soft-delete timestamp (null if active)")
     deadline: Optional[datetime] = Field(None, description="Task deadline")
     estimated_duration_min: int = Field(30, description="Estimated duration in minutes")
     duration_confidence: float = Field(0.5, ge=0.0, le=1.0, description="Confidence in duration estimate")

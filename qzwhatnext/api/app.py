@@ -166,6 +166,17 @@ class TaskListResponse(BaseModel):
     count: int
 
 
+class BulkTaskIdsRequest(BaseModel):
+    """Request model for bulk task actions based on explicit IDs."""
+    task_ids: List[str] = Field(..., min_length=1, description="List of task IDs to operate on")
+
+
+class BulkActionResponse(BaseModel):
+    """Response model for bulk delete/restore/purge actions."""
+    affected_count: int
+    not_found_ids: List[str] = Field(default_factory=list)
+
+
 class ImportSheetsRequest(BaseModel):
     """Request model for importing from Google Sheets."""
     spreadsheet_id: str
@@ -256,6 +267,12 @@ async def root():
             <h2>Tasks</h2>
             <div class="row">
                 <button onclick="viewTasks()">Refresh Tasks</button>
+                <label style="display: inline-flex; align-items: center; gap: 6px; font-weight: normal;">
+                    <input type="checkbox" id="selectAllTasks" onchange="toggleSelectAllTasks(this.checked)">
+                    Select all
+                </label>
+                <button onclick="deleteSelectedTasks()">Delete selected</button>
+                <button onclick="purgeSelectedTasks()">Purge selected</button>
                 <span id="tasksUpdated" class="muted"></span>
             </div>
             <div id="tasks"></div>
@@ -835,16 +852,25 @@ async def root():
                     if (isStale(version)) return;
                     
                     if (data.tasks.length === 0) {
+                        selectedTaskIds.clear();
+                        lastRenderedTaskIds = [];
+                        updateTaskSelectionUi();
                         tasksDiv.innerHTML = '<p>No tasks yet. Create a task or import from Google Sheets.</p>';
                         if (tasksUpdated) tasksUpdated.textContent = `Last refreshed: ${new Date().toLocaleString()}`;
                         return;
                     }
                     
+                    lastRenderedTaskIds = (data.tasks || []).map(t => t.id);
+                    // Drop any selections that are no longer visible
+                    selectedTaskIds = new Set(Array.from(selectedTaskIds).filter(id => lastRenderedTaskIds.includes(id)));
+
                     let html = `<p><strong>Total tasks: ${data.count}</strong></p>`;
-                    html += '<div class="tasks-container"><table><tr><th>Title</th><th>Category</th><th>Duration</th><th>Status</th><th>Notes</th></tr>';
+                    html += '<div class="tasks-container"><table><tr><th></th><th>Title</th><th>Category</th><th>Duration</th><th>Status</th><th>Notes</th></tr>';
                     data.tasks.forEach(task => {
                         const notes = task.notes ? task.notes.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;') : '';
+                        const checked = selectedTaskIds.has(task.id) ? 'checked' : '';
                         html += `<tr>
+                            <td><input type="checkbox" class="task-select" ${checked} onchange="toggleTaskSelection('${task.id}', this.checked)"></td>
                             <td>${task.title}</td>
                             <td>${task.category || 'N/A'}</td>
                             <td>${task.estimated_duration_min || 30} min</td>
@@ -855,12 +881,96 @@ async def root():
                     html += '</table></div>';
                     
                     tasksDiv.innerHTML = html;
+                    updateTaskSelectionUi();
                     if (tasksUpdated) tasksUpdated.textContent = `Last refreshed: ${new Date().toLocaleString()}`;
                 } catch (error) {
                     if (isStale(version)) return;
                     tasksDiv.innerHTML = 'Error: ' + error.message;
                     const tasksUpdated = document.getElementById('tasksUpdated');
                     if (tasksUpdated) tasksUpdated.textContent = 'Refresh failed.';
+                }
+            }
+
+            let selectedTaskIds = new Set();
+            let lastRenderedTaskIds = [];
+
+            function updateTaskSelectionUi() {
+                const selectAll = document.getElementById('selectAllTasks');
+                if (selectAll) {
+                    const total = lastRenderedTaskIds.length;
+                    const selected = selectedTaskIds.size;
+                    selectAll.checked = total > 0 && selected === total;
+                    selectAll.indeterminate = selected > 0 && selected < total;
+                }
+            }
+
+            function toggleTaskSelection(taskId, checked) {
+                if (checked) selectedTaskIds.add(taskId);
+                else selectedTaskIds.delete(taskId);
+                updateTaskSelectionUi();
+            }
+
+            function toggleSelectAllTasks(checked) {
+                if (checked) {
+                    lastRenderedTaskIds.forEach(id => selectedTaskIds.add(id));
+                } else {
+                    lastRenderedTaskIds.forEach(id => selectedTaskIds.delete(id));
+                }
+                // Update visible checkboxes without refetching
+                const boxes = document.querySelectorAll('input.task-select');
+                boxes.forEach(b => { b.checked = checked; });
+                updateTaskSelectionUi();
+            }
+
+            async function deleteSelectedTasks() {
+                const version = authVersion;
+                const status = document.getElementById('status');
+                const ids = Array.from(selectedTaskIds);
+                if (ids.length === 0) {
+                    status.innerHTML = 'No tasks selected.';
+                    return;
+                }
+                if (!confirm(`Delete ${ids.length} selected task(s)? (Undoable via restore endpoint)`)) return;
+                try {
+                    status.innerHTML = 'Deleting selected tasks...';
+                    const response = await apiFetch('/tasks/bulk_delete', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ task_ids: ids }),
+                    }, version);
+                    const data = await response.json();
+                    if (isStale(version)) return;
+                    selectedTaskIds.clear();
+                    status.innerHTML = `Deleted ${data.affected_count} task(s).` + (data.not_found_ids && data.not_found_ids.length ? ` Not found: ${data.not_found_ids.length}.` : '');
+                    await viewTasks(version);
+                } catch (e) {
+                    if (!isStale(version)) status.innerHTML = 'Error: ' + (e && e.message ? e.message : String(e));
+                }
+            }
+
+            async function purgeSelectedTasks() {
+                const version = authVersion;
+                const status = document.getElementById('status');
+                const ids = Array.from(selectedTaskIds);
+                if (ids.length === 0) {
+                    status.innerHTML = 'No tasks selected.';
+                    return;
+                }
+                if (!confirm(`Purge ${ids.length} selected task(s)? This is irreversible.`)) return;
+                try {
+                    status.innerHTML = 'Purging selected tasks...';
+                    const response = await apiFetch('/tasks/bulk_purge', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ task_ids: ids }),
+                    }, version);
+                    const data = await response.json();
+                    if (isStale(version)) return;
+                    selectedTaskIds.clear();
+                    status.innerHTML = `Purged ${data.affected_count} task(s).` + (data.not_found_ids && data.not_found_ids.length ? ` Not found: ${data.not_found_ids.length}.` : '');
+                    await viewTasks(version);
+                } catch (e) {
+                    if (!isStale(version)) status.innerHTML = 'Error: ' + (e && e.message ? e.message : String(e));
                 }
             }
             
@@ -1315,12 +1425,97 @@ async def delete_task(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Delete a task."""
+    """Soft-delete a task (undoable via restore)."""
     repo = TaskRepository(db)
+    schedule_repo = ScheduledBlockRepository(db)
     success = repo.delete(current_user.id, task_id)
     if not success:
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+
+    # Ensure schedule doesn't reference deleted tasks
+    schedule_repo.delete_task_blocks(current_user.id, [task_id])
     return None
+
+
+@app.post("/tasks/{task_id}/restore", response_model=TaskResponse)
+async def restore_task(
+    task_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Restore a soft-deleted task."""
+    repo = TaskRepository(db)
+    success = repo.restore(current_user.id, task_id)
+    if not success:
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+
+    # Return the active task
+    task = repo.get(current_user.id, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+    return TaskResponse(task=task)
+
+
+@app.delete("/tasks/{task_id}/purge", status_code=204)
+async def purge_task(
+    task_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Permanently delete a task (irreversible)."""
+    repo = TaskRepository(db)
+    schedule_repo = ScheduledBlockRepository(db)
+    success = repo.purge(current_user.id, task_id)
+    if not success:
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+
+    # Ensure schedule doesn't reference deleted tasks
+    schedule_repo.delete_task_blocks(current_user.id, [task_id])
+    return None
+
+
+@app.post("/tasks/bulk_delete", response_model=BulkActionResponse)
+async def bulk_delete_tasks(
+    request: BulkTaskIdsRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Soft-delete multiple tasks (undoable via bulk restore)."""
+    repo = TaskRepository(db)
+    schedule_repo = ScheduledBlockRepository(db)
+    result = repo.bulk_delete(current_user.id, request.task_ids)
+    # Ensure schedule doesn't reference deleted tasks
+    if result.get("affected_count", 0) > 0:
+        schedule_repo.delete_task_blocks(current_user.id, request.task_ids)
+    return BulkActionResponse(**result)
+
+
+@app.post("/tasks/bulk_restore", response_model=BulkActionResponse)
+async def bulk_restore_tasks(
+    request: BulkTaskIdsRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Restore multiple soft-deleted tasks."""
+    repo = TaskRepository(db)
+    result = repo.bulk_restore(current_user.id, request.task_ids)
+    return BulkActionResponse(**result)
+
+
+@app.post("/tasks/bulk_purge", response_model=BulkActionResponse)
+async def bulk_purge_tasks(
+    request: BulkTaskIdsRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Permanently delete multiple tasks (irreversible)."""
+    repo = TaskRepository(db)
+    schedule_repo = ScheduledBlockRepository(db)
+    result = repo.bulk_purge(current_user.id, request.task_ids)
+    # Ensure schedule doesn't reference deleted tasks
+    if result.get("affected_count", 0) > 0:
+        schedule_repo.delete_task_blocks(current_user.id, request.task_ids)
+    return BulkActionResponse(**result)
 
 
 # Google Sheets import endpoint
