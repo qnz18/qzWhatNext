@@ -243,6 +243,12 @@ async def root():
             .form-group { margin: 10px 0; }
             .muted { color: #666; font-size: 0.9em; }
             .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+            .row.grow { align-items: flex-start; }
+            .row .spacer { flex: 1 1 auto; }
+            .row .wrap { flex: 1 1 260px; min-width: 220px; }
+            .task-select { width: auto; margin: 0; }
+            th.select-col, td.select-col { width: 44px; text-align: center; }
+            #tasksUpdated { display: inline-block; }
         </style>
     </head>
     <body>
@@ -267,13 +273,15 @@ async def root():
             <h2>Tasks</h2>
             <div class="row">
                 <button onclick="viewTasks()">Refresh Tasks</button>
-                <label style="display: inline-flex; align-items: center; gap: 6px; font-weight: normal;">
+                <span id="tasksUpdated" class="muted wrap"></span>
+            </div>
+            <div class="row">
+                <label style="display: inline-flex; align-items: center; gap: 6px; font-weight: normal; margin-top: 0;">
                     <input type="checkbox" id="selectAllTasks" onchange="toggleSelectAllTasks(this.checked)">
                     Select all
                 </label>
                 <button onclick="deleteSelectedTasks()">Delete selected</button>
                 <button onclick="purgeSelectedTasks()">Purge selected</button>
-                <span id="tasksUpdated" class="muted"></span>
             </div>
             <div id="tasks"></div>
         </div>
@@ -880,12 +888,12 @@ async def root():
                     selectedTaskIds = new Set(Array.from(selectedTaskIds).filter(id => lastRenderedTaskIds.includes(id)));
 
                     let html = `<p><strong>Total tasks: ${data.count}</strong></p>`;
-                    html += '<div class="tasks-container"><table><tr><th></th><th>Title</th><th>Category</th><th>Duration</th><th>Status</th><th>Notes</th></tr>';
+                    html += '<div class="tasks-container"><table><tr><th class="select-col">Sel</th><th>Title</th><th>Category</th><th>Duration</th><th>Status</th><th>Notes</th></tr>';
                     data.tasks.forEach(task => {
                         const notes = task.notes ? task.notes.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;') : '';
                         const checked = selectedTaskIds.has(task.id) ? 'checked' : '';
                         html += `<tr>
-                            <td><input type="checkbox" class="task-select" ${checked} onchange="toggleTaskSelection('${task.id}', this.checked)"></td>
+                            <td class="select-col"><input type="checkbox" class="task-select" ${checked} onchange="toggleTaskSelection('${task.id}', this.checked)"></td>
                             <td>${task.title}</td>
                             <td>${task.category || 'N/A'}</td>
                             <td>${task.estimated_duration_min || 30} min</td>
