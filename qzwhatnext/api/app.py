@@ -251,8 +251,8 @@ async def root():
             #tasksUpdated { display: inline-block; }
             .tasks-actions { display: block; margin-top: 6px; }
             .tasks-actions label { white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; font-weight: normal; margin-top: 0; }
-            .tasks-actions-bottom { margin-top: 10px; display: grid; gap: 10px; }
-            .tasks-actions-bottom button { width: 100%; }
+            .tasks-actions-bottom { margin-top: 10px; display: flex; gap: 10px; justify-content: flex-start; flex-wrap: wrap; }
+            .tasks-actions-bottom button { width: auto; padding: 6px 12px; font-size: 0.9em; }
         </style>
     </head>
     <body>
