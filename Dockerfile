@@ -10,6 +10,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY qzwhatnext/ ./qzwhatnext/
+COPY alembic/ ./alembic/
+COPY alembic.ini ./alembic.ini
 
 # Expose port (Cloud Run will set PORT env var, default to 8000 for local dev)
 EXPOSE 8000
