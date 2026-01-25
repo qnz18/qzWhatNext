@@ -891,38 +891,53 @@ async def root():
             function connectGoogleCalendar(version = authVersion) {
                 return new Promise((resolve, reject) => {
                     if (isStale(version)) return reject(new Error('Auth changed; please try again.'));
-                    const w = window.open('/auth/google/calendar/start', 'qz_google_calendar_oauth', 'width=520,height=700');
-                    if (!w) return reject(new Error('Popup blocked. Please allow popups and try again.'));
-
-                    let done = false;
-                    const cleanup = () => {
-                        window.removeEventListener('message', onMessage);
-                        clearInterval(poll);
-                        done = true;
-                        try { w.close(); } catch (e) { /* ignore */ }
-                    };
-
-                    const onMessage = (event) => {
-                        const data = event && event.data;
-                        if (data && data.type === 'qz_google_calendar_connected') {
-                            cleanup();
-                            resolve(true);
+                    // Important: popups can't attach Authorization headers to backend routes.
+                    // Fetch the Google consent URL with JWT, then open Google directly.
+                    apiFetch('/auth/google/calendar/auth-url', {}, version).then(async (res) => {
+                        let payload = null;
+                        try { payload = await res.json(); } catch (e) { /* ignore */ }
+                        if (!res.ok) {
+                            const detail = (payload && payload.detail) ? String(payload.detail) : `Failed to start calendar connect (HTTP ${res.status})`;
+                            throw new Error(detail);
                         }
-                    };
+                        const url = payload && payload.url ? String(payload.url) : '';
+                        if (!url) throw new Error('Missing calendar auth URL from server.');
 
-                    window.addEventListener('message', onMessage);
-                    const poll = setInterval(() => {
-                        if (done) return;
-                        if (isStale(version)) {
-                            cleanup();
-                            reject(new Error('Auth changed; please try again.'));
-                            return;
-                        }
-                        if (w.closed) {
-                            cleanup();
-                            reject(new Error('Google Calendar connection window was closed.'));
-                        }
-                    }, 500);
+                        const w = window.open(url, 'qz_google_calendar_oauth', 'width=520,height=700');
+                        if (!w) throw new Error('Popup blocked. Please allow popups and try again.');
+
+                        let done = false;
+                        const cleanup = () => {
+                            window.removeEventListener('message', onMessage);
+                            clearInterval(poll);
+                            done = true;
+                            try { w.close(); } catch (e) { /* ignore */ }
+                        };
+
+                        const onMessage = (event) => {
+                            const data = event && event.data;
+                            if (data && data.type === 'qz_google_calendar_connected') {
+                                cleanup();
+                                resolve(true);
+                            }
+                        };
+
+                        window.addEventListener('message', onMessage);
+                        const poll = setInterval(() => {
+                            if (done) return;
+                            if (isStale(version)) {
+                                cleanup();
+                                reject(new Error('Auth changed; please try again.'));
+                                return;
+                            }
+                            if (w.closed) {
+                                cleanup();
+                                reject(new Error('Google Calendar connection window was closed.'));
+                            }
+                        }, 500);
+                    }).catch((e) => {
+                        reject(e instanceof Error ? e : new Error(String(e)));
+                    });
                 });
             }
 
@@ -1293,6 +1308,38 @@ async def google_calendar_oauth_start(
     }
 
     return RedirectResponse(url=f"{auth_url}?{urlencode(params)}", status_code=302)
+
+
+@app.get("/auth/google/calendar/auth-url")
+async def google_calendar_oauth_auth_url(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+):
+    """Return the Google consent URL for Calendar connect (JSON).
+
+    This exists because browser popups can't attach Authorization headers to server routes.
+    The UI fetches this URL (with JWT) then opens the returned Google URL in a popup.
+    """
+    client_id = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "").strip()
+    client_secret = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "").strip()
+    if not client_id or not client_secret:
+        raise HTTPException(status_code=500, detail="Google OAuth client is not configured")
+
+    redirect_uri = _public_url_for(request, "google_calendar_oauth_callback")
+    state = _encode_calendar_oauth_state(current_user.id)
+
+    auth_url = "https://accounts.google.com/o/oauth2/v2/auth"
+    params = {
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": "https://www.googleapis.com/auth/calendar",
+        "access_type": "offline",
+        "prompt": "consent",
+        "include_granted_scopes": "true",
+        "state": state,
+    }
+    return {"url": f"{auth_url}?{urlencode(params)}"}
 
 
 @app.get("/auth/google/calendar/callback", name="google_calendar_oauth_callback")
@@ -1966,7 +2013,7 @@ async def sync_calendar(
         if not token_row:
             raise HTTPException(
                 status_code=400,
-                detail="Google Calendar not connected. Open /auth/google/calendar/start to connect.",
+                detail="Google Calendar not connected. Connect via /auth/google/calendar/auth-url (or click Sync in the UI).",
             )
 
         client_id = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "").strip()
@@ -1991,7 +2038,7 @@ async def sync_calendar(
             logger.warning(f"Google Calendar refresh failed for user {current_user.id}: {type(e).__name__}: {str(e)}")
             raise HTTPException(
                 status_code=400,
-                detail="Google Calendar authorization expired or was revoked. Reconnect via /auth/google/calendar/start.",
+                detail="Google Calendar authorization expired or was revoked. Reconnect via /auth/google/calendar/auth-url (or click Sync in the UI).",
             )
 
         calendar_client = GoogleCalendarClient(credentials=creds, calendar_id="primary")

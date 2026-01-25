@@ -373,11 +373,11 @@ class TestGoogleCalendarSync:
         build = test_client.post("/schedule")
         assert build.status_code == 200
 
-        # Start OAuth to obtain a valid signed state.
-        start = test_client.get("/auth/google/calendar/start", allow_redirects=False)
-        assert start.status_code == 302
-        loc = start.headers["location"]
-        qs = parse_qs(urlparse(loc).query)
+        # Fetch auth URL to obtain a valid signed state.
+        auth_url_resp = test_client.get("/auth/google/calendar/auth-url")
+        assert auth_url_resp.status_code == 200
+        auth_url = auth_url_resp.json()["url"]
+        qs = parse_qs(urlparse(auth_url).query)
         state = qs.get("state", [None])[0]
         assert state
 
