@@ -5,14 +5,15 @@ runtime: python39
 env_variables:
   # Multi-user authentication (required)
   # GOOGLE_OAUTH_CLIENT_ID: your-google-oauth-client-id.apps.googleusercontent.com
+  # GOOGLE_OAUTH_CLIENT_SECRET: your-google-oauth-client-secret  # Required for Calendar connect
   # JWT_SECRET_KEY: your-secure-jwt-secret-key  # Use Secret Manager in production
+  # TOKEN_ENCRYPTION_KEY: your-fernet-key  # Encrypt stored refresh tokens at rest (Secret Manager)
   
   # JWT configuration (optional, has defaults)
   # JWT_ALGORITHM: HS256
   # JWT_EXPIRATION_HOURS: 24
   
   # Google Calendar/Sheets integration (optional)
-  # GOOGLE_CALENDAR_CREDENTIALS_PATH: path/to/credentials.json
   # GOOGLE_SHEETS_CREDENTIALS_PATH: path/to/credentials.json
   # GOOGLE_CALENDAR_ID: primary
   

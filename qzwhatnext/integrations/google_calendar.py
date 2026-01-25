@@ -24,6 +24,7 @@ class GoogleCalendarClient:
     
     def __init__(
         self,
+        credentials: Optional[Credentials] = None,
         credentials_path: Optional[str] = None,
         calendar_id: Optional[str] = None,
         token_path: str = "token.json"
@@ -31,6 +32,7 @@ class GoogleCalendarClient:
         """Initialize Google Calendar client.
         
         Args:
+            credentials: Pre-authenticated OAuth2 credentials (preferred for deployed envs).
             credentials_path: Path to OAuth2 credentials JSON file.
                              If None, reads from GOOGLE_CALENDAR_CREDENTIALS_PATH env var.
             calendar_id: Google Calendar ID to use.
@@ -41,7 +43,12 @@ class GoogleCalendarClient:
         self.calendar_id = calendar_id or os.getenv("GOOGLE_CALENDAR_ID", "primary")
         self.token_path = token_path
         self.service = None
-        self._authenticate()
+        self.creds = credentials
+        if self.creds is not None:
+            self.service = build('calendar', 'v3', credentials=self.creds)
+        else:
+            # Legacy/local-dev OAuth flow. Do NOT use this for deployed web auth.
+            self._authenticate()
     
     def _authenticate(self):
         """Authenticate with Google Calendar API using OAuth2."""

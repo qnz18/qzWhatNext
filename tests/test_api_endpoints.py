@@ -7,6 +7,8 @@ import pytest
 from datetime import datetime, timedelta
 from fastapi.testclient import TestClient
 from qzwhatnext.models.task import TaskStatus, TaskCategory, EnergyIntensity
+from urllib.parse import urlparse, parse_qs
+from unittest.mock import patch, MagicMock
 
 
 class TestTaskEndpoints:
@@ -348,5 +350,66 @@ class TestRootEndpoint:
         assert "Signed in (token present)." not in response.text
         assert "Checking session..." in response.text
         assert "Session expired. Please sign in again." in response.text
+
+
+class TestGoogleCalendarSync:
+    def test_sync_calendar_requires_connected_calendar(self, test_client):
+        """If schedule exists but calendar isn't connected, /sync-calendar should 400."""
+        # Create a task and build schedule so blocks exist.
+        r = test_client.post("/tasks", json={"title": "Calendar Task", "category": "work", "estimated_duration_min": 30})
+        assert r.status_code == 201
+        build = test_client.post("/schedule")
+        assert build.status_code == 200
+
+        sync = test_client.post("/sync-calendar")
+        assert sync.status_code == 400
+        assert "Google Calendar not connected" in sync.json()["detail"]
+
+    def test_oauth_callback_stores_token_and_syncs(self, test_client):
+        """OAuth callback should store refresh token, and /sync-calendar should create events."""
+        # Create a task and build schedule so blocks exist.
+        r = test_client.post("/tasks", json={"title": "Calendar Task 2", "category": "work", "estimated_duration_min": 30})
+        assert r.status_code == 201
+        build = test_client.post("/schedule")
+        assert build.status_code == 200
+
+        # Start OAuth to obtain a valid signed state.
+        start = test_client.get("/auth/google/calendar/start", allow_redirects=False)
+        assert start.status_code == 302
+        loc = start.headers["location"]
+        qs = parse_qs(urlparse(loc).query)
+        state = qs.get("state", [None])[0]
+        assert state
+
+        # Mock Google's token exchange response.
+        mock_token_resp = MagicMock()
+        mock_token_resp.ok = True
+        mock_token_resp.json.return_value = {
+            # Avoid real token patterns (secret scanner will flag them).
+            "access_token": "test_access_token_value",
+            "refresh_token": "test_refresh_token_value",
+            "expires_in": 3600,
+            "scope": "https://www.googleapis.com/auth/calendar",
+            "token_type": "Bearer",
+        }
+
+        with patch("qzwhatnext.api.app.requests.post", return_value=mock_token_resp):
+            cb = test_client.get("/auth/google/calendar/callback", params={"code": "test-code", "state": state})
+            assert cb.status_code == 200
+            assert "Google Calendar connected" in cb.text or "already connected" in cb.text
+
+        # Mock credential refresh and Calendar client behavior to avoid network.
+        with patch("qzwhatnext.api.app.GoogleCredentials.refresh", return_value=None), patch(
+            "qzwhatnext.integrations.google_calendar.build",
+            return_value=MagicMock(),
+        ), patch(
+            "qzwhatnext.api.app.GoogleCalendarClient.create_event_from_block",
+            return_value={"id": "evt_123"},
+        ):
+            sync = test_client.post("/sync-calendar")
+            assert sync.status_code == 200
+            payload = sync.json()
+            assert payload["events_created"] >= 1
+            assert isinstance(payload["event_ids"], list)
 
 

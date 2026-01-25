@@ -16,6 +16,9 @@ psycopg[binary]>=3.2.0
 # Authentication
 PyJWT>=2.8.0
 
+# Encryption (store OAuth refresh tokens encrypted-at-rest)
+cryptography>=42.0.0
+
 # Google Cloud
 google-cloud-secret-manager>=2.16.0
 

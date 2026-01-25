@@ -155,30 +155,31 @@ Set these in your deployment:
 **Required:**
 - `GOOGLE_OAUTH_CLIENT_ID`: OAuth client ID for user authentication (public, exposed to frontend)
 - `JWT_SECRET_KEY`: Secure JWT signing key (use Secret Manager in production)
+- `GOOGLE_OAUTH_CLIENT_SECRET`: Required for per-user Google Calendar connect (store in Secret Manager)
+- `TOKEN_ENCRYPTION_KEY`: Fernet key used to encrypt stored OAuth refresh tokens at rest (store in Secret Manager)
 
 **Optional:**
-- `GOOGLE_OAUTH_CLIENT_SECRET`: OAuth client secret (for future use, store in Secret Manager)
 - `JWT_ALGORITHM`: JWT algorithm (defaults to "HS256")
 - `JWT_EXPIRATION_HOURS`: Token expiration in hours (defaults to "24")
-- `GOOGLE_CALENDAR_CREDENTIALS_PATH`: Path to OAuth2 credentials for Calendar API (optional, separate from user OAuth)
-- `GOOGLE_SHEETS_CREDENTIALS_PATH`: Path to OAuth2 credentials for Sheets API (optional, separate from user OAuth)
+- `GOOGLE_SHEETS_CREDENTIALS_PATH`: Path to OAuth2 credentials for Sheets API (legacy/local-dev flow)
 - `GOOGLE_CALENDAR_ID`: Calendar ID (defaults to "primary")
 - `OPENAI_API_KEY`: OpenAI API key for AI category inference (optional, use Secret Manager)
 - `DATABASE_URL`: Database connection string (defaults to `sqlite:///./qzwhatnext.db`)
 - `DEBUG`: Set to "False" in production
 
-**Note:** User authentication OAuth credentials are different from Calendar/Sheets API OAuth credentials. You need separate OAuth2 credentials for user authentication.
+**Note:** Google Calendar sync uses a **per-user web OAuth flow** and stores refresh tokens encrypted in the DB. It does **not** use `credentials.json` / `token.json` in production.
 
-## Google Calendar/Sheets OAuth2 Setup (Optional)
-
-**Note:** This is separate from user authentication OAuth. These credentials are for Calendar/Sheets API integration only.
+## Google Calendar OAuth Setup (Optional)
 
 1. Go to [Google Cloud Console](https://console.cloud.google.com/)
-2. Enable Google Calendar API and Google Sheets API
-3. Create OAuth2 credentials (Web app type for production)
-4. Download as `credentials.json`
-5. For first run, the app will open a browser for OAuth2 authorization
-6. Tokens will be saved to `token.json` (Calendar) and `sheets_token.json` (Sheets) - already in .gitignore
+2. Enable Google Calendar API
+3. Ensure your OAuth consent screen is configured
+4. In your OAuth client (Web application), add an **Authorized redirect URI**:
+   - `https://YOUR_DOMAIN/auth/google/calendar/callback`
+5. Set these secrets in your deployment:
+   - `GOOGLE_OAUTH_CLIENT_SECRET`
+   - `TOKEN_ENCRYPTION_KEY`
+6. In the app UI, click **Sync to Google Calendar** → you’ll be prompted to connect your Google account.
 
 ## Security Notes
 
@@ -204,10 +205,10 @@ Set these in your deployment:
 - Verify Google+ API or Google Identity API is enabled
 
 **Calendar/Sheets OAuth2:**
-- Ensure credentials.json is in the correct location (for Calendar/Sheets only)
-- Check that Calendar API and Sheets API are enabled
+- For Google Calendar sync: verify redirect URI is correct and secrets are set
+- For Google Sheets import (legacy/local-dev flow): ensure `credentials.json` is available and Sheets API is enabled
 - Verify OAuth2 consent screen is configured
-- For production, use Secret Manager for credentials
+- For production, use Secret Manager for secrets
 
 ### Import Failures
 - Verify Google Calendar/Sheets credentials are valid (if using integrations)

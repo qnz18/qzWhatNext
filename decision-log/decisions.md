@@ -665,7 +665,29 @@ Task deletion defaults to **soft delete** (set `deleted_at`), with explicit endp
 The system’s trust contract requires actions to be reversible. Soft delete supports user mistakes and makes deletions undoable, while purge remains available for irreversible cleanup.
 
 **Implications:**  
-- `DELETE /tasks/{task_id}` performs soft delete\n+- Soft-deleted tasks are hidden from task reads and scheduling\n+- Restore endpoints re-activate soft-deleted tasks\n+- Purge endpoints permanently remove tasks\n+- ScheduledBlocks referencing deleted/purged tasks must be removed to avoid orphaned schedule entries
+- `DELETE /tasks/{task_id}` performs soft delete
+- Soft-deleted tasks are hidden from task reads and scheduling
+- Restore endpoints re-activate soft-deleted tasks
+- Purge endpoints permanently remove tasks
+- ScheduledBlocks referencing deleted/purged tasks must be removed to avoid orphaned schedule entries
+
+**Status:** Locked
+
+---
+
+## D-037 — Google Calendar Sync Uses Per-User OAuth Tokens (MVP)
+
+**Decision:**  
+Google Calendar sync uses a **per-user web OAuth flow** and stores the resulting **refresh token encrypted at rest** in the database.
+
+**Rationale:**  
+Deployed environments (Cloud Run) cannot rely on server-local browser prompts or local token files. Per-user OAuth ensures each user syncs to their own calendar while keeping credentials protected.
+
+**Implications:**  
+- Requires `GOOGLE_OAUTH_CLIENT_SECRET` and `TOKEN_ENCRYPTION_KEY` in production
+- `POST /sync-calendar` requires the user to connect their calendar via `/auth/google/calendar/start`
+- No `credentials.json` / `token.json` is required (or used) for Google Calendar sync in production
+- If tokens are revoked/expired, the user must reconnect
 
 **Status:** Locked
 

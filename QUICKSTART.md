@@ -13,12 +13,20 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-## 2. Configure (Optional - for Google Calendar/Sheets and OpenAI)
+## 2. Configure (Optional - for Google Calendar, Google Sheets, and OpenAI)
 
-Create a `.env` file in the project root:
+Create a `.env` file in the project root (examples):
 
 ```bash
-GOOGLE_CALENDAR_CREDENTIALS_PATH=credentials.json
+# Required for Google Sign-in (multi-user auth)
+GOOGLE_OAUTH_CLIENT_ID=your-client-id.apps.googleusercontent.com
+JWT_SECRET_KEY=change-me-in-production
+
+# Required for Google Calendar sync (per-user OAuth token storage)
+GOOGLE_OAUTH_CLIENT_SECRET=your-client-secret
+TOKEN_ENCRYPTION_KEY=your-fernet-key
+
+# Optional
 GOOGLE_CALENDAR_ID=primary
 GOOGLE_SHEETS_CREDENTIALS_PATH=credentials.json
 OPENAI_API_KEY=sk-your-api-key-here
@@ -28,18 +36,18 @@ OPENAI_API_KEY=sk-your-api-key-here
 - Google Calendar/Sheets setup is optional. You can use the scheduling features and REST API without Google integration.
 - OpenAI API key is optional. If not set, category inference will not be available and tasks created via `/tasks/add_smart` will use `UNKNOWN` category. The database (SQLite) will be created automatically.
 
-## 3. Google Calendar/Sheets Setup (Optional)
+## 3. Google Calendar Setup (Optional)
 
 1. Go to [Google Cloud Console](https://console.cloud.google.com/)
 2. Create a new project or select existing
-3. Enable Google Calendar API and Google Sheets API
+3. Enable Google Calendar API
 4. Create OAuth2 credentials:
-   - Choose "Web app" (works for both local and production)
-   - **IMPORTANT**: Add `http://localhost:8080/` to "Authorized redirect URIs" (for local development)
-   - The exact URI must be: `http://localhost:8080/` (with the trailing slash)
-5. Download as `credentials.json` to project root
-
-**Note**: The current implementation uses `InstalledAppFlow` with a fixed port (8080) for OAuth. Make sure `http://localhost:8080/` is exactly in your authorized redirect URIs in Google Cloud Console. If you get a "redirect_uri_mismatch" error, verify this URI is added correctly.
+   - Choose "Web application"
+   - Add these **Authorized redirect URIs**:
+     - `http://localhost:8000/auth/google/calendar/callback`
+     - (For production) `https://YOUR_DOMAIN/auth/google/calendar/callback`
+5. Copy the Client ID + Client Secret into `.env` as `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET`
+6. Generate a Fernet key for `TOKEN_ENCRYPTION_KEY` (this encrypts refresh tokens at rest)
 
 ## 4. Run
 
@@ -62,13 +70,13 @@ Visit `http://localhost:8000` in your browser.
   - `DELETE /tasks/{task_id}` - Delete a task
 - **Import tasks** from Google Sheets:
   - `POST /import/sheets` - Import tasks from a Google Sheet
-  - Requires OAuth2 setup (first time will open browser for authorization)
+  - Note: current Sheets integration is optimized for local dev and uses server-local OAuth
 - **Build schedule**:
   - `POST /schedule` - Create a schedule from tasks in database
   - `GET /schedule` - View the current schedule
 - **Sync to Google Calendar**:
   - `POST /sync-calendar` - Write scheduled events to Google Calendar
-  - Requires OAuth2 setup (first time will open browser for authorization)
+  - If not connected yet, the UI will prompt you to connect your Google Calendar via OAuth
 
 **Note:** 
 - Tasks are persisted in SQLite database (`qzwhatnext.db`)

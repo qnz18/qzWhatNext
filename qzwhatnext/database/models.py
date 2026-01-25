@@ -300,3 +300,26 @@ class ApiTokenDB(Base):
     last_used_at = Column(DateTime, nullable=True)
     revoked_at = Column(DateTime, nullable=True)
 
+
+class GoogleOAuthTokenDB(Base):
+    """Per-user OAuth tokens for Google integrations (e.g., Calendar).
+
+    Tokens are stored encrypted-at-rest (see repository layer); do NOT log raw tokens.
+    """
+
+    __tablename__ = "google_oauth_tokens"
+
+    # Composite primary key: one row per user/provider/product.
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    provider = Column(String, primary_key=True)  # e.g. "google"
+    product = Column(String, primary_key=True)   # e.g. "calendar"
+
+    scopes = Column(JSON, nullable=False, default=list)
+
+    refresh_token_encrypted = Column(String, nullable=False)
+    access_token_encrypted = Column(String, nullable=True)
+    expiry = Column(DateTime, nullable=True)
+
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+

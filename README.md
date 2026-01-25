@@ -116,12 +116,18 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-3. Set up environment variables (optional, for Google Calendar/Sheets and OpenAI):
+3. Set up environment variables (optional, for Google Calendar, Google Sheets, and OpenAI):
    - Create `.env` file in project root
-   - Add Google API credentials path and calendar ID:
+   - For Google Sign-in (multi-user auth) + Google Calendar sync (per-user OAuth):
      ```
-     GOOGLE_CALENDAR_CREDENTIALS_PATH=credentials.json
+     GOOGLE_OAUTH_CLIENT_ID=your-client-id.apps.googleusercontent.com
+     GOOGLE_OAUTH_CLIENT_SECRET=your-client-secret
+     JWT_SECRET_KEY=change-me-in-production
+     TOKEN_ENCRYPTION_KEY=your-fernet-key
      GOOGLE_CALENDAR_ID=primary
+     ```
+   - (Optional / legacy) Google Sheets import uses `credentials.json`:
+     ```
      GOOGLE_SHEETS_CREDENTIALS_PATH=credentials.json
      ```
    - For AI category inference (optional):
@@ -131,11 +137,11 @@ pip install -r requirements.txt
    - Note: The same `credentials.json` file can be used for both Calendar and Sheets APIs
    - Note: If `OPENAI_API_KEY` is not set, category inference will not be available and tasks will use `UNKNOWN` category
 
-4. For Google Calendar/Sheets integration:
-   - Enable Google Calendar API and Google Sheets API in Google Cloud Console
-   - Create OAuth2 credentials (Web app type)
-   - **IMPORTANT**: Add `http://localhost:8080/` to authorized redirect URIs (exact URI with trailing slash)
-   - Download OAuth2 credentials as `credentials.json` to project root
+4. For Google Calendar sync:
+   - Enable Google Calendar API in Google Cloud Console
+   - Add authorized redirect URI(s):
+     - `http://localhost:8000/auth/google/calendar/callback` (local)
+     - `https://YOUR_DOMAIN/auth/google/calendar/callback` (production)
 
 5. Run the application:
 ```bash

@@ -3,11 +3,17 @@
 import logging
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional, Dict
-from fastapi import FastAPI, HTTPException, Depends
+from urllib.parse import urlencode, urlparse, urlunparse
+
+import jwt
+import requests
+from fastapi import FastAPI, HTTPException, Depends, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, Response, RedirectResponse
+from google.auth.transport.requests import Request as GoogleAuthRequest
+from google.oauth2.credentials import Credentials as GoogleCredentials
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -23,6 +29,10 @@ from qzwhatnext.engine.scheduler import schedule_tasks, SchedulingResult
 from qzwhatnext.engine.inference import infer_category, generate_title, estimate_duration
 from qzwhatnext.database.database import get_db, init_db
 from qzwhatnext.database.repository import TaskRepository
+from qzwhatnext.database.google_oauth_token_repository import (
+    GoogleOAuthTokenRepository,
+    decrypt_secret,
+)
 from qzwhatnext.database.user_repository import UserRepository
 from qzwhatnext.database.scheduled_block_repository import ScheduledBlockRepository
 from qzwhatnext.database.models import ApiTokenDB
@@ -53,6 +63,48 @@ def _build_task_titles_dict(tasks: List[Task], scheduled_blocks: List[ScheduledB
         if block.entity_type == "task" and block.entity_id in task_dict:
             task_titles[block.entity_id] = task_dict[block.entity_id].title
     return task_titles
+
+
+def _public_url_for(request: Request, endpoint_name: str) -> str:
+    """Create an absolute URL honoring reverse-proxy scheme headers (Cloud Run)."""
+    url = str(request.url_for(endpoint_name))
+    forwarded_proto = request.headers.get("x-forwarded-proto")
+    if forwarded_proto:
+        parsed = urlparse(url)
+        url = urlunparse(parsed._replace(scheme=forwarded_proto))
+    return url
+
+
+def _encode_calendar_oauth_state(user_id: str) -> str:
+    """Signed state token binding OAuth callback to a user (short-lived)."""
+    secret = os.getenv("JWT_SECRET_KEY", "change-me-in-production")
+    payload = {
+        "sub": user_id,
+        "purpose": "google_calendar_oauth",
+        "jti": str(uuid.uuid4()),
+        "exp": datetime.utcnow() + timedelta(minutes=10),
+        "iat": datetime.utcnow(),
+    }
+    return jwt.encode(payload, secret, algorithm=os.getenv("JWT_ALGORITHM", "HS256"))
+
+
+def _decode_calendar_oauth_state(state: str) -> str:
+    secret = os.getenv("JWT_SECRET_KEY", "change-me-in-production")
+    try:
+        payload = jwt.decode(
+            state,
+            secret,
+            algorithms=[os.getenv("JWT_ALGORITHM", "HS256")],
+            options={"require": ["exp", "sub"]},
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail="Invalid OAuth state") from e
+    if payload.get("purpose") != "google_calendar_oauth":
+        raise HTTPException(status_code=400, detail="Invalid OAuth state")
+    user_id = payload.get("sub")
+    if not user_id:
+        raise HTTPException(status_code=400, detail="Invalid OAuth state")
+    return str(user_id)
 
 
 # Initialize FastAPI app
@@ -836,13 +888,73 @@ async def root():
                 }
             }
             
+            function connectGoogleCalendar(version = authVersion) {
+                return new Promise((resolve, reject) => {
+                    if (isStale(version)) return reject(new Error('Auth changed; please try again.'));
+                    const w = window.open('/auth/google/calendar/start', 'qz_google_calendar_oauth', 'width=520,height=700');
+                    if (!w) return reject(new Error('Popup blocked. Please allow popups and try again.'));
+
+                    let done = false;
+                    const cleanup = () => {
+                        window.removeEventListener('message', onMessage);
+                        clearInterval(poll);
+                        done = true;
+                        try { w.close(); } catch (e) { /* ignore */ }
+                    };
+
+                    const onMessage = (event) => {
+                        const data = event && event.data;
+                        if (data && data.type === 'qz_google_calendar_connected') {
+                            cleanup();
+                            resolve(true);
+                        }
+                    };
+
+                    window.addEventListener('message', onMessage);
+                    const poll = setInterval(() => {
+                        if (done) return;
+                        if (isStale(version)) {
+                            cleanup();
+                            reject(new Error('Auth changed; please try again.'));
+                            return;
+                        }
+                        if (w.closed) {
+                            cleanup();
+                            reject(new Error('Google Calendar connection window was closed.'));
+                        }
+                    }, 500);
+                });
+            }
+
             async function syncCalendar() {
                 const version = authVersion;
                 const status = document.getElementById('status');
                 status.innerHTML = 'Syncing to Google Calendar...';
                 try {
-                    const response = await apiFetch('/sync-calendar', { method: 'POST' }, version);
-                    const data = await response.json();
+                    // First attempt
+                    let response = await apiFetch('/sync-calendar', { method: 'POST' }, version);
+                    let data = null;
+                    try { data = await response.clone().json(); } catch (e) { /* ignore */ }
+
+                    if (!response.ok) {
+                        const detail = (data && data.detail) ? String(data.detail) : `Sync failed (HTTP ${response.status})`;
+                        if (response.status === 400 && detail.includes('Google Calendar not connected')) {
+                            status.innerHTML = 'Connecting Google Calendar...';
+                            await connectGoogleCalendar(version);
+                            if (isStale(version)) return;
+                            // Retry after connect
+                            response = await apiFetch('/sync-calendar', { method: 'POST' }, version);
+                            data = await response.json();
+                            if (!response.ok) {
+                                const retryDetail = (data && data.detail) ? String(data.detail) : `Sync failed (HTTP ${response.status})`;
+                                throw new Error(retryDetail);
+                            }
+                        } else {
+                            throw new Error(detail);
+                        }
+                    } else {
+                        data = await response.json();
+                    }
                     if (isStale(version)) return;
                     status.innerHTML = `Synced ${data.events_created} events to Google Calendar`;
                 } catch (error) {
@@ -1149,6 +1261,146 @@ async def google_oauth_callback(
 async def get_current_user_info(current_user: User = Depends(get_current_user)):
     """Get current authenticated user information."""
     return {"user": current_user.model_dump()}
+
+
+@app.get("/auth/google/calendar/start")
+async def google_calendar_oauth_start(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+):
+    """Start per-user Google Calendar OAuth (authorization code flow).
+
+    This is required for deployed environments (Cloud Run); do not use server-local OAuth flows.
+    """
+    client_id = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "").strip()
+    client_secret = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "").strip()
+    if not client_id or not client_secret:
+        raise HTTPException(status_code=500, detail="Google OAuth client is not configured")
+
+    redirect_uri = _public_url_for(request, "google_calendar_oauth_callback")
+    state = _encode_calendar_oauth_state(current_user.id)
+
+    auth_url = "https://accounts.google.com/o/oauth2/v2/auth"
+    params = {
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": "https://www.googleapis.com/auth/calendar",
+        "access_type": "offline",
+        "prompt": "consent",
+        "include_granted_scopes": "true",
+        "state": state,
+    }
+
+    return RedirectResponse(url=f"{auth_url}?{urlencode(params)}", status_code=302)
+
+
+@app.get("/auth/google/calendar/callback", name="google_calendar_oauth_callback")
+async def google_calendar_oauth_callback(
+    request: Request,
+    code: Optional[str] = Query(default=None),
+    state: Optional[str] = Query(default=None),
+    error: Optional[str] = Query(default=None),
+    error_description: Optional[str] = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    """OAuth callback that exchanges code for tokens and stores refresh token encrypted."""
+    if error:
+        msg = error_description or error
+        return HTMLResponse(
+            f"""<!doctype html>
+<html><body>
+<h3>Google Calendar connection failed</h3>
+<p>{msg}</p>
+</body></html>""",
+            status_code=400,
+        )
+
+    if not code or not state:
+        raise HTTPException(status_code=400, detail="Missing OAuth code/state")
+
+    user_id = _decode_calendar_oauth_state(state)
+
+    client_id = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "").strip()
+    client_secret = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "").strip()
+    if not client_id or not client_secret:
+        raise HTTPException(status_code=500, detail="Google OAuth client is not configured")
+
+    redirect_uri = _public_url_for(request, "google_calendar_oauth_callback")
+
+    token_url = "https://oauth2.googleapis.com/token"
+    token_resp = requests.post(
+        token_url,
+        data={
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "code": code,
+            "grant_type": "authorization_code",
+            "redirect_uri": redirect_uri,
+        },
+        timeout=15,
+    )
+
+    try:
+        token_data = token_resp.json()
+    except Exception:
+        raise HTTPException(status_code=502, detail="Failed to parse Google token response")
+
+    if not token_resp.ok:
+        err = token_data.get("error_description") or token_data.get("error") or "Google token exchange failed"
+        raise HTTPException(status_code=502, detail=str(err))
+
+    refresh_token = token_data.get("refresh_token")
+    access_token = token_data.get("access_token")
+    expires_in = token_data.get("expires_in")
+    scope_str = token_data.get("scope") or ""
+    scopes = [s for s in scope_str.split() if s] or ["https://www.googleapis.com/auth/calendar"]
+
+    repo = GoogleOAuthTokenRepository(db)
+    if not refresh_token:
+        # Google may omit refresh_token on subsequent grants.
+        existing = repo.get_google_calendar(user_id)
+        if not existing:
+            raise HTTPException(
+                status_code=400,
+                detail="Google did not return a refresh token. Please revoke app access in your Google Account and try again.",
+            )
+        # Keep existing refresh token; connection is still valid.
+        html = """<!doctype html>
+<html><body>
+<script>
+  (function () {
+    try { if (window.opener) window.opener.postMessage({type: 'qz_google_calendar_connected'}, '*'); } catch (e) {}
+    try { window.close(); } catch (e) {}
+  })();
+</script>
+<p>Google Calendar is already connected. You can close this window.</p>
+</body></html>"""
+        return HTMLResponse(html, status_code=200)
+
+    expiry = None
+    if isinstance(expires_in, (int, float)):
+        expiry = datetime.utcnow() + timedelta(seconds=int(expires_in))
+
+    repo.upsert_google_calendar(
+        user_id=user_id,
+        refresh_token=str(refresh_token),
+        scopes=scopes,
+        access_token=str(access_token) if access_token else None,
+        expiry=expiry,
+    )
+
+    html = """<!doctype html>
+<html><body>
+<script>
+  (function () {
+    try { if (window.opener) window.opener.postMessage({type: 'qz_google_calendar_connected'}, '*'); } catch (e) {}
+    try { window.close(); } catch (e) {}
+  })();
+</script>
+<p>Google Calendar connected. You can close this window.</p>
+</body></html>"""
+    return HTMLResponse(html, status_code=200)
 
 
 @app.get("/auth/shortcut-token", response_model=ShortcutTokenStatusResponse)
@@ -1709,7 +1961,40 @@ async def sync_calendar(
         raise HTTPException(status_code=400, detail="No schedule available. Build a schedule first.")
     
     try:
-        calendar_client = GoogleCalendarClient()
+        token_repo = GoogleOAuthTokenRepository(db)
+        token_row = token_repo.get_google_calendar(current_user.id)
+        if not token_row:
+            raise HTTPException(
+                status_code=400,
+                detail="Google Calendar not connected. Open /auth/google/calendar/start to connect.",
+            )
+
+        client_id = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "").strip()
+        client_secret = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "").strip()
+        if not client_id or not client_secret:
+            raise HTTPException(status_code=500, detail="Google OAuth client is not configured")
+
+        refresh_token = decrypt_secret(token_row.refresh_token_encrypted)
+        scopes = token_row.scopes or ["https://www.googleapis.com/auth/calendar"]
+
+        creds = GoogleCredentials(
+            token=None,
+            refresh_token=refresh_token,
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=client_id,
+            client_secret=client_secret,
+            scopes=scopes,
+        )
+        try:
+            creds.refresh(GoogleAuthRequest())
+        except Exception as e:
+            logger.warning(f"Google Calendar refresh failed for user {current_user.id}: {type(e).__name__}: {str(e)}")
+            raise HTTPException(
+                status_code=400,
+                detail="Google Calendar authorization expired or was revoked. Reconnect via /auth/google/calendar/start.",
+            )
+
+        calendar_client = GoogleCalendarClient(credentials=creds, calendar_id="primary")
         tasks = task_repo.get_all(current_user.id)
         tasks_dict = {task.id: task for task in tasks}
         
@@ -1735,11 +2020,8 @@ async def sync_calendar(
             events_created=events_created,
             event_ids=event_ids
         )
-    except FileNotFoundError as e:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Google Calendar credentials not found. {str(e)}"
-        )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to sync calendar: {type(e).__name__}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to sync calendar: {str(e)}")

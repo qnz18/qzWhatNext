@@ -7,9 +7,12 @@ This guide covers testing the minimal MVP implementation.
 1. Python 3.9+ installed
 2. Virtual environment created and activated
 3. Dependencies installed: `pip install -r requirements.txt`
-4. `.env` file configured (optional, for Google Calendar):
-   - `GOOGLE_CALENDAR_CREDENTIALS_PATH` (path to credentials.json)
-   - `GOOGLE_CALENDAR_ID` (defaults to "primary")
+4. `.env` file configured (optional, for Google Calendar sync):
+   - `GOOGLE_OAUTH_CLIENT_ID`
+   - `GOOGLE_OAUTH_CLIENT_SECRET`
+   - `JWT_SECRET_KEY`
+   - `TOKEN_ENCRYPTION_KEY`
+   - `GOOGLE_CALENDAR_ID` (optional; defaults to "primary")
 
 ## Local Testing
 
@@ -28,7 +31,7 @@ The application will be available at `http://localhost:8000`
 3. Create tasks via `POST /tasks`
 4. Build schedule via `POST /schedule`
 5. View schedule via `GET /schedule`
-6. Sync to Google Calendar via `POST /sync-calendar` (requires OAuth2 setup)
+6. Sync to Google Calendar via `POST /sync-calendar` (first time will prompt you to connect via OAuth)
 
 ### 3. Test via API
 
@@ -200,9 +203,8 @@ Test that tasks are assigned to correct tiers:
 - If database errors occur, check file permissions in project directory
 
 ### Google Calendar/Sheets OAuth2 Errors
-- Ensure `credentials.json` exists and is valid
-- First run will open browser for authorization
-- Tokens will be saved to `token.json` (Calendar) and `sheets_token.json` (Sheets)
+- For Google Calendar sync: ensure OAuth client redirect URI includes `/auth/google/calendar/callback` and required env vars are set
+- For Google Sheets import (legacy/local-dev flow): ensure `credentials.json` exists and is valid
 - Ensure Calendar API and Sheets API are enabled in Google Cloud Console
 - Verify OAuth2 consent screen is configured
 

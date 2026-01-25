@@ -20,6 +20,18 @@ from qzwhatnext.models.task import Task, TaskStatus, TaskCategory, EnergyIntensi
 TEST_DATABASE_URL = "sqlite:///:memory:"
 
 
+@pytest.fixture(autouse=True)
+def _test_env(monkeypatch):
+    """Provide required env vars for tests (no real secrets)."""
+    from cryptography.fernet import Fernet
+
+    monkeypatch.setenv("TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode("utf-8"))
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "test-google-client-id")
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_SECRET", "test-google-client-secret")
+    # Keep JWT signing deterministic in tests.
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-jwt-secret")
+    monkeypatch.setenv("JWT_ALGORITHM", "HS256")
+
 @pytest.fixture(scope="function")
 def db_session(test_user_id):
     """Create a database session for testing.

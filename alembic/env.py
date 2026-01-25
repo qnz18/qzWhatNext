@@ -12,7 +12,7 @@ from alembic import context
 
 # Import database setup
 from qzwhatnext.database.database import Base, DATABASE_URL
-from qzwhatnext.database.models import TaskDB, UserDB, ScheduledBlockDB
+from qzwhatnext.database.models import TaskDB, UserDB, ScheduledBlockDB, GoogleOAuthTokenDB
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
