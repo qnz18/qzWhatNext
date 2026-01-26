@@ -3,7 +3,7 @@
 import logging
 import os
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Dict
 from urllib.parse import urlencode, urlparse, urlunparse
 
@@ -22,7 +22,12 @@ from qzwhatnext.models.task import Task, TaskStatus, TaskCategory, EnergyIntensi
 from qzwhatnext.models.scheduled_block import ScheduledBlock
 from qzwhatnext.models.task_factory import create_task_base, determine_ai_exclusion
 from qzwhatnext.api.auth_models import GoogleOAuthCallbackRequest, AuthResponse
-from qzwhatnext.integrations.google_calendar import GoogleCalendarClient
+from qzwhatnext.integrations.google_calendar import (
+    GoogleCalendarClient,
+    PRIVATE_KEY_BLOCK_ID,
+    PRIVATE_KEY_MANAGED,
+    PRIVATE_KEY_TASK_ID,
+)
 from qzwhatnext.integrations.google_sheets import GoogleSheetsClient
 from qzwhatnext.engine.ranking import stack_rank
 from qzwhatnext.engine.scheduler import schedule_tasks, SchedulingResult
@@ -255,6 +260,11 @@ class SyncResponse(BaseModel):
     """Response for calendar sync."""
     events_created: int
     event_ids: List[str]
+
+
+class ScheduledBlockResponse(BaseModel):
+    """Response model for scheduled block operations."""
+    block: ScheduledBlock
 
 
 class ShortcutTokenStatusResponse(BaseModel):
@@ -1145,7 +1155,7 @@ async def root():
                         return;
                     }
                     
-                    let html = '<table><tr><th>Start</th><th>End</th><th>Task</th></tr>';
+                    let html = '<table><tr><th>Start</th><th>End</th><th>Task</th><th>Freeze</th></tr>';
                     data.scheduled_blocks.forEach(block => {
                         let taskName = 'Unknown';
                         if (block.entity_type === 'task' && data.task_titles && data.task_titles[block.entity_id]) {
@@ -1155,10 +1165,12 @@ async def root():
                         } else {
                             taskName = block.entity_id; // Fallback to ID if title not found
                         }
+                        const checked = block.locked ? 'checked' : '';
                         html += `<tr>
                             <td>${new Date(block.start_time).toLocaleString()}</td>
                             <td>${new Date(block.end_time).toLocaleString()}</td>
                             <td>${taskName}</td>
+                            <td><input type="checkbox" ${checked} onchange="toggleFreeze('${block.id}', this.checked)"></td>
                         </tr>`;
                     });
                     html += '</table>';
@@ -1175,6 +1187,29 @@ async def root():
                 } catch (error) {
                     if (isStale(version)) return;
                     scheduleDiv.innerHTML = 'Error: ' + error.message;
+                }
+            }
+
+            async function toggleFreeze(blockId, checked) {
+                const version = authVersion;
+                const status = document.getElementById('status');
+                try {
+                    status.innerHTML = checked ? 'Freezing block...' : 'Unfreezing block...';
+                    const path = checked ? `/schedule/blocks/${blockId}/lock` : `/schedule/blocks/${blockId}/unlock`;
+                    const response = await apiFetch(path, { method: 'POST' }, version);
+                    let data = null;
+                    try { data = await response.json(); } catch (e) { /* ignore */ }
+                    if (!response.ok) {
+                        const detail = (data && data.detail) ? String(data.detail) : `Failed (HTTP ${response.status})`;
+                        throw new Error(detail);
+                    }
+                    if (isStale(version)) return;
+                    status.innerHTML = checked ? 'Block frozen.' : 'Block unfrozen.';
+                    await viewSchedule(version);
+                } catch (e) {
+                    if (!isStale(version)) status.innerHTML = 'Error: ' + (e && e.message ? e.message : String(e));
+                    // Refresh schedule to revert UI checkbox to server state.
+                    try { await viewSchedule(version); } catch (_) { /* ignore */ }
                 }
             }
             
@@ -1942,21 +1977,46 @@ async def build_schedule(
         raise HTTPException(status_code=400, detail="No tasks available. Create tasks first.")
     
     try:
+        # Preserve locked blocks from prior schedule (frozen placements).
+        existing_blocks = schedule_repo.get_all(current_user.id)
+        locked_blocks = [b for b in existing_blocks if b.locked]
+
+        # Compute reserved intervals (locked time is off-limits for new blocks).
+        reserved_intervals = [(b.start_time, b.end_time) for b in locked_blocks]
+
+        # Reduce per-task remaining duration by time already covered by locked blocks.
+        locked_minutes_by_task: Dict[str, int] = {}
+        for b in locked_blocks:
+            if b.entity_type == "task":
+                mins = int((b.end_time - b.start_time).total_seconds() // 60)
+                locked_minutes_by_task[b.entity_id] = locked_minutes_by_task.get(b.entity_id, 0) + max(mins, 0)
+
         # Stack rank tasks
         ranked_tasks = stack_rank(tasks)
-        
-        # Schedule tasks (blocks will have user_id from task.user_id)
-        schedule_result = schedule_tasks(ranked_tasks)
-        
-        # Store schedule in database (delete old, insert new)
-        schedule_repo.delete_all_for_user(current_user.id)
+
+        # Schedule remaining work around locked placements.
+        schedulable_tasks: List[Task] = []
+        for t in ranked_tasks:
+            consumed = locked_minutes_by_task.get(t.id, 0)
+            remaining = max(int(t.estimated_duration_min) - consumed, 0)
+            if remaining <= 0:
+                continue
+            schedulable_tasks.append(t.model_copy(update={"estimated_duration_min": remaining}))
+
+        schedule_result = schedule_tasks(schedulable_tasks, reserved_intervals=reserved_intervals)
+
+        # Store schedule in database (preserve locked, replace unlocked)
+        schedule_repo.delete_unlocked_for_user(current_user.id)
         schedule_repo.create_batch(schedule_result.scheduled_blocks)
+
+        # Combined view: locked blocks + newly scheduled blocks
+        combined_blocks = sorted(locked_blocks + schedule_result.scheduled_blocks, key=lambda b: b.start_time)
         
         # Build task titles map for frontend lookup
-        task_titles = _build_task_titles_dict(tasks, schedule_result.scheduled_blocks)
+        task_titles = _build_task_titles_dict(tasks, combined_blocks)
         
         return ScheduleResponse(
-            scheduled_blocks=schedule_result.scheduled_blocks,
+            scheduled_blocks=combined_blocks,
             overflow_tasks=schedule_result.overflow_tasks,
             start_time=schedule_result.start_time,
             task_titles=task_titles
@@ -2045,33 +2105,247 @@ async def sync_calendar(
         tasks = task_repo.get_all(current_user.id)
         tasks_dict = {task.id: task for task in tasks}
         
+        def _parse_rfc3339(dt_str: Optional[str]) -> Optional[datetime]:
+            if not dt_str:
+                return None
+            try:
+                return datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
+            except Exception:
+                return None
+
+        def _to_utc_naive(dt: Optional[datetime]) -> Optional[datetime]:
+            if dt is None:
+                return None
+            if dt.tzinfo is None:
+                return dt
+            return dt.astimezone(timezone.utc).replace(tzinfo=None)
+
+        def _event_private(event: dict) -> dict:
+            return ((event.get("extendedProperties") or {}).get("private") or {})
+
+        def _is_managed_event_for_block(event: dict, block_id: str) -> bool:
+            priv = _event_private(event)
+            return priv.get(PRIVATE_KEY_MANAGED) == "1" and priv.get(PRIVATE_KEY_BLOCK_ID) == block_id
+
+        def _needs_patch(event: dict, *, desired: dict) -> bool:
+            # Compare only the fields we own (summary, description, start/end, private keys).
+            if (event.get("summary") or "") != (desired.get("summary") or ""):
+                return True
+            if (event.get("description") or "") != (desired.get("description") or ""):
+                return True
+            ev_start = (event.get("start") or {}).get("dateTime")
+            ev_end = (event.get("end") or {}).get("dateTime")
+            d_start = (desired.get("start") or {}).get("dateTime")
+            d_end = (desired.get("end") or {}).get("dateTime")
+            if (ev_start or "") != (d_start or "") or (ev_end or "") != (d_end or ""):
+                return True
+            ev_priv = _event_private(event)
+            d_priv = ((desired.get("extendedProperties") or {}).get("private") or {})
+            for k in (PRIVATE_KEY_TASK_ID, PRIVATE_KEY_BLOCK_ID, PRIVATE_KEY_MANAGED):
+                if (ev_priv.get(k) or "") != (d_priv.get(k) or ""):
+                    return True
+            return False
+
         events_created = 0
-        event_ids = []
-        
+        event_ids: List[str] = []
+
+        schedule_repo = ScheduledBlockRepository(db)
+
         for block in blocks:
-            if block.entity_type == "task":
-                task = tasks_dict.get(block.entity_id)
-                try:
-                    event = calendar_client.create_event_from_block(block, task)
+            if block.entity_type != "task":
+                continue
+
+            task = tasks_dict.get(block.entity_id)
+            if task is None:
+                continue
+
+            try:
+                event = None
+                event_id = block.calendar_event_id
+
+                # 1) Prefer direct lookup by persisted event id
+                if event_id:
+                    event = calendar_client.get_event(event_id)
+                    if event is None:
+                        # Event missing (deleted). Clear mapping so we can recreate.
+                        schedule_repo.update_calendar_sync_metadata(
+                            current_user.id,
+                            block.id,
+                            calendar_event_id=None,
+                            calendar_event_etag=None,
+                            calendar_event_updated_at=None,
+                        )
+                        event_id = None
+
+                # 2) Fallback: find existing event by private block id (legacy / adopted)
+                if event is None and not event_id:
+                    event = calendar_client.find_event_by_block_id(block.id)
+                    if event is not None:
+                        # Defensive: only accept if it actually carries our block marker.
+                        priv = _event_private(event)
+                        if priv.get(PRIVATE_KEY_BLOCK_ID) == block.id:
+                            event_id = event.get("id")
+                        else:
+                            event = None
+                            event_id = None
+
+                # 3) Create if missing
+                if event is None:
+                    created = calendar_client.create_event_from_block(block, task)
+                    event_id = created.get("id")
                     events_created += 1
-                    event_id = event.get('id', 'unknown')
-                    event_ids.append(event_id)
-                    
-                    # Note: In MVP, we don't persist calendar_event_id updates
-                    # This would require update method in ScheduledBlockRepository
-                except Exception as e:
-                    logger.error(f"Failed to create calendar event for block {block.id}: {type(e).__name__}: {str(e)}")
+                    if event_id:
+                        event_ids.append(event_id)
+                    schedule_repo.update_calendar_sync_metadata(
+                        current_user.id,
+                        block.id,
+                        calendar_event_id=event_id,
+                        calendar_event_etag=created.get("etag"),
+                        calendar_event_updated_at=_to_utc_naive(_parse_rfc3339(created.get("updated"))),
+                    )
                     continue
-        
-        return SyncResponse(
-            events_created=events_created,
-            event_ids=event_ids
-        )
+
+                if not event_id:
+                    # Shouldn't happen, but never touch unknown ids.
+                    continue
+
+                # 4) Adopt legacy event by adding managed marker (if it looks like ours).
+                priv = _event_private(event)
+                if priv.get(PRIVATE_KEY_BLOCK_ID) == block.id and priv.get(PRIVATE_KEY_MANAGED) != "1":
+                    patch_body = {
+                        "extendedProperties": {
+                            "private": {
+                                PRIVATE_KEY_TASK_ID: block.entity_id,
+                                PRIVATE_KEY_BLOCK_ID: block.id,
+                                PRIVATE_KEY_MANAGED: "1",
+                            }
+                        }
+                    }
+                    event = calendar_client.patch_event(event_id, patch_body)
+
+                # Safety: only update events proven managed for this block.
+                if not _is_managed_event_for_block(event, block.id):
+                    continue
+
+                # Always persist event id mapping if found.
+                if block.calendar_event_id != event_id:
+                    schedule_repo.update_calendar_sync_metadata(
+                        current_user.id,
+                        block.id,
+                        calendar_event_id=event_id,
+                    )
+
+                event_etag = event.get("etag")
+                event_updated_at = _to_utc_naive(_parse_rfc3339(event.get("updated")))
+
+                calendar_changed = (
+                    (block.calendar_event_etag or "") != (event_etag or "")
+                    or (block.calendar_event_updated_at != event_updated_at)
+                ) or (block.calendar_event_etag is None and block.calendar_event_updated_at is None)
+
+                if calendar_changed:
+                    # Import calendar time into qzWhatNext and lock if time changed.
+                    start_str = (event.get("start") or {}).get("dateTime")
+                    end_str = (event.get("end") or {}).get("dateTime")
+                    if start_str and end_str:
+                        ev_start = _to_utc_naive(_parse_rfc3339(start_str))
+                        ev_end = _to_utc_naive(_parse_rfc3339(end_str))
+                        if ev_start and ev_end:
+                            time_changed = ev_start != block.start_time or ev_end != block.end_time
+                            schedule_repo.update_times_and_lock(
+                                current_user.id,
+                                block.id,
+                                start_time=ev_start,
+                                end_time=ev_end,
+                                lock=time_changed,
+                            )
+                    # Import title/notes from Calendar to prevent overwriting user edits.
+                    ev_title = event.get("summary")
+                    ev_notes = event.get("description")
+                    if (ev_title is not None and ev_title != task.title) or (ev_notes is not None and ev_notes != task.notes):
+                        existing = task_repo.get(current_user.id, task.id)
+                        if existing is not None:
+                            updated_task = existing.model_copy(
+                                update={
+                                    "title": ev_title if ev_title is not None else existing.title,
+                                    "notes": ev_notes if ev_notes is not None else existing.notes,
+                                    "updated_at": datetime.utcnow(),
+                                }
+                            )
+                            task_repo.update(updated_task)
+                    schedule_repo.update_calendar_sync_metadata(
+                        current_user.id,
+                        block.id,
+                        calendar_event_id=event_id,
+                        calendar_event_etag=event_etag,
+                        calendar_event_updated_at=event_updated_at,
+                    )
+                    continue
+
+                # No calendar-side edits since last sync: push app state if needed.
+                desired = {
+                    "summary": task.title,
+                    "description": task.notes,
+                    "start": {"dateTime": block.start_time.isoformat(), "timeZone": "UTC"},
+                    "end": {"dateTime": block.end_time.isoformat(), "timeZone": "UTC"},
+                    "extendedProperties": {
+                        "private": {
+                            PRIVATE_KEY_TASK_ID: block.entity_id,
+                            PRIVATE_KEY_BLOCK_ID: block.id,
+                            PRIVATE_KEY_MANAGED: "1",
+                        }
+                    },
+                }
+                if _needs_patch(event, desired=desired):
+                    updated = calendar_client.patch_event(event_id, desired)
+                    schedule_repo.update_calendar_sync_metadata(
+                        current_user.id,
+                        block.id,
+                        calendar_event_id=event_id,
+                        calendar_event_etag=updated.get("etag"),
+                        calendar_event_updated_at=_to_utc_naive(_parse_rfc3339(updated.get("updated"))),
+                    )
+
+            except Exception as e:
+                logger.error(
+                    f"Failed to sync calendar event for block {block.id}: {type(e).__name__}: {str(e)}"
+                )
+                continue
+
+        return SyncResponse(events_created=events_created, event_ids=event_ids)
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Failed to sync calendar: {type(e).__name__}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to sync calendar: {str(e)}")
+
+
+@app.post("/schedule/blocks/{block_id}/lock", response_model=ScheduledBlockResponse)
+async def lock_scheduled_block(
+    block_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Freeze a scheduled block date/time so rebuild won't move it."""
+    repo = ScheduledBlockRepository(db)
+    updated = repo.set_locked(current_user.id, block_id, True)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Scheduled block not found")
+    return ScheduledBlockResponse(block=updated)
+
+
+@app.post("/schedule/blocks/{block_id}/unlock", response_model=ScheduledBlockResponse)
+async def unlock_scheduled_block(
+    block_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Unfreeze a scheduled block so rebuild may move it again."""
+    repo = ScheduledBlockRepository(db)
+    updated = repo.set_locked(current_user.id, block_id, False)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Scheduled block not found")
+    return ScheduledBlockResponse(block=updated)
 
 
 if __name__ == "__main__":

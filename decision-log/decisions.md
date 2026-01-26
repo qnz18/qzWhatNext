@@ -537,6 +537,8 @@ Simplifies MVP implementation while maintaining system authority over scheduling
 
 **Status:** Locked
 
+**Status update (2026-01-26):** Superseded by D-038.
+
 ---
 
 ## D-030 — Source Metadata Structure
@@ -568,7 +570,7 @@ Enables system to update or delete calendar events on rebuild, preventing duplic
 **Implications:**  
 - ScheduledBlock tracks calendar_event_id for each synced calendar event
 - System can update/delete events it created
-- Required for "last write wins" calendar sync strategy
+- Required for calendar sync idempotency and safe managed updates (see D-038)
 
 **Status:** Locked
 
@@ -602,10 +604,12 @@ Prevents rebuild loops and maintains clear data flow: tasks → schedule → cal
 **Implications:**  
 - System-created calendar events are excluded from rebuild triggers
 - Rebuild triggers include: task changes, user-blocked time changes, manually scheduled events (user-created)
-- Calendar sync is one-way: system → calendar (MVP)
-- Future bidirectional sync will have separate mechanisms
+- Calendar sync is one-way: system → calendar (MVP) **(superseded by D-038)**
+- Future bidirectional sync will have separate mechanisms **(implemented for managed events; see D-038)**
 
 **Status:** Locked
+
+**Status update (2026-01-26):** Superseded in part by D-038.
 
 ---
 
@@ -689,6 +693,27 @@ Deployed environments (Cloud Run) cannot rely on server-local browser prompts or
 - No `credentials.json` / `token.json` is required (or used) for Google Calendar sync in production
 - If tokens are revoked/expired, the user must reconnect
 
+**Status:** Locked
+
+---
+
+## D-038 — Google Calendar Sync Is Idempotent and Bidirectional for Managed Events
+
+**Decision:**  
+Google Calendar sync is **idempotent** and **bidirectional** for qzWhatNext-managed events:
+- The system **creates or updates** only events it can prove it owns (qzWhatNext-managed events).
+- If a user edits a qzWhatNext-managed event in Google Calendar, the change is **imported back into qzWhatNext**.
+- If the user changes **date/time** in Google Calendar, qzWhatNext **locks** the corresponding `ScheduledBlock` so schedule rebuilds do not move it unless the user explicitly unlocks it.
+
+**Rationale:**  
+Prevents duplicate events, preserves user fixes made directly in Calendar, and keeps qzWhatNext and Google Calendar in sync without violating the trust boundary of editing user-owned events.
+
+**Implications:**  
+- qzWhatNext-managed events are identified by private `extendedProperties` (e.g., `qzwhatnext_block_id` and a managed marker) and/or persisted `calendar_event_id`
+- The system never edits calendar events that are not marked/identified as qzWhatNext-managed
+- Per-block calendar version metadata (e.g., `etag`, `updated`) is tracked to detect calendar-side edits deterministically
+- Locked scheduled blocks are preserved across schedule rebuilds
+- This supersedes the “last write wins” policy described in D-029 for managed events
 **Status:** Locked
 
 ---

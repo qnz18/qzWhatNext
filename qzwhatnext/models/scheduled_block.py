@@ -30,6 +30,10 @@ class ScheduledBlock(BaseModel):
     scheduled_by: ScheduledBy = Field(ScheduledBy.SYSTEM, description="Who scheduled this block")
     locked: bool = Field(False, description="Whether this block is locked from movement")
     calendar_event_id: Optional[str] = Field(None, description="Calendar event ID for sync (null if not synced)")
+    calendar_event_etag: Optional[str] = Field(None, description="Calendar event etag last seen during sync")
+    calendar_event_updated_at: Optional[datetime] = Field(
+        None, description="Calendar event 'updated' timestamp last seen during sync"
+    )
     
     class Config:
         """Pydantic configuration."""

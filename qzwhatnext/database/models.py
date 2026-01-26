@@ -242,6 +242,8 @@ class ScheduledBlockDB(Base):
     scheduled_by = Column(String, nullable=False)
     locked = Column(Boolean, nullable=False, default=False)
     calendar_event_id = Column(String, nullable=True)
+    calendar_event_etag = Column(String, nullable=True)
+    calendar_event_updated_at = Column(DateTime, nullable=True)
     
     # Timestamps
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
@@ -259,6 +261,8 @@ class ScheduledBlockDB(Base):
             scheduled_by=value_to_enum(self.scheduled_by, ScheduledBy, ScheduledBy.SYSTEM),
             locked=self.locked,
             calendar_event_id=self.calendar_event_id,
+            calendar_event_etag=self.calendar_event_etag,
+            calendar_event_updated_at=self.calendar_event_updated_at,
         )
     
     @classmethod
@@ -274,6 +278,8 @@ class ScheduledBlockDB(Base):
             scheduled_by=enum_to_value(block.scheduled_by),
             locked=block.locked,
             calendar_event_id=block.calendar_event_id,
+            calendar_event_etag=getattr(block, "calendar_event_etag", None),
+            calendar_event_updated_at=getattr(block, "calendar_event_updated_at", None),
         )
 
 

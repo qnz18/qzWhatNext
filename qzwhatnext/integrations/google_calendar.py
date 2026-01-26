@@ -18,6 +18,11 @@ load_dotenv()
 # Google Calendar API scopes
 SCOPES = ['https://www.googleapis.com/auth/calendar']
 
+# Private extendedProperties keys used to identify qzWhatNext-managed events.
+PRIVATE_KEY_TASK_ID = "qzwhatnext_task_id"
+PRIVATE_KEY_BLOCK_ID = "qzwhatnext_block_id"
+PRIVATE_KEY_MANAGED = "qzwhatnext_managed"
+
 
 class GoogleCalendarClient:
     """Client for Google Calendar API integration."""
@@ -118,8 +123,9 @@ class GoogleCalendarClient:
             },
             'extendedProperties': {
                 'private': {
-                    'qzwhatnext_task_id': block.entity_id,
-                    'qzwhatnext_block_id': block.id,
+                    PRIVATE_KEY_TASK_ID: block.entity_id,
+                    PRIVATE_KEY_BLOCK_ID: block.id,
+                    PRIVATE_KEY_MANAGED: "1",
                 }
             }
         }
@@ -133,6 +139,47 @@ class GoogleCalendarClient:
             return event
         except HttpError as error:
             raise Exception(f"Failed to create calendar event: {error}") from error
+
+    def get_event(self, event_id: str) -> dict:
+        """Get a calendar event by ID."""
+        try:
+            return self.service.events().get(calendarId=self.calendar_id, eventId=event_id).execute()
+        except HttpError as error:
+            # If the event was deleted from Calendar, treat as missing.
+            status = getattr(getattr(error, "resp", None), "status", None)
+            if status == 404:
+                return None
+            raise
+
+    def find_event_by_block_id(self, block_id: str, *, max_results: int = 5) -> Optional[dict]:
+        """Find an event by qzWhatNext block id (private extended property)."""
+        try:
+            resp = (
+                self.service.events()
+                .list(
+                    calendarId=self.calendar_id,
+                    privateExtendedProperty=f"{PRIVATE_KEY_BLOCK_ID}={block_id}",
+                    maxResults=max_results,
+                    singleEvents=True,
+                    orderBy="startTime",
+                )
+                .execute()
+            )
+            items = resp.get("items") or []
+            return items[0] if items else None
+        except HttpError as error:
+            raise
+
+    def patch_event(self, event_id: str, body: dict) -> dict:
+        """Patch an event (partial update)."""
+        try:
+            return (
+                self.service.events()
+                .patch(calendarId=self.calendar_id, eventId=event_id, body=body)
+                .execute()
+            )
+        except HttpError as error:
+            raise
     
     def create_events_from_blocks(
         self,

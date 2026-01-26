@@ -6,7 +6,7 @@ For minimal MVP, assumes all time is free (no calendar conflict checking).
 
 import uuid
 from datetime import datetime, timedelta
-from typing import List, Optional
+from typing import List, Optional, Tuple
 from qzwhatnext.models.task import Task
 from qzwhatnext.models.scheduled_block import ScheduledBlock, EntityType, ScheduledBy
 from qzwhatnext.models.constants import SCHEDULING_GRANULARITY_MINUTES
@@ -28,6 +28,7 @@ def schedule_tasks(
     tasks: List[Task],
     start_time: Optional[datetime] = None,
     end_time: Optional[datetime] = None,
+    reserved_intervals: Optional[List[Tuple[datetime, datetime]]] = None,
 ) -> SchedulingResult:
     """Schedule tasks into time blocks.
     
@@ -41,6 +42,7 @@ def schedule_tasks(
         tasks: List of tasks in stack-ranked order
         start_time: When to start scheduling (defaults to now)
         end_time: When to stop scheduling (defaults to 7 days from start)
+        reserved_intervals: Optional list of fixed [start, end) intervals that may not be overlapped.
         
     Returns:
         SchedulingResult with scheduled blocks and overflow tasks
@@ -56,6 +58,41 @@ def schedule_tasks(
     result.start_time = start_time
     
     current_time = start_time
+
+    # Normalize reserved intervals: sort and drop invalid/empty.
+    reserved: List[Tuple[datetime, datetime]] = []
+    for s, e in (reserved_intervals or []):
+        if s is None or e is None:
+            continue
+        if e <= s:
+            continue
+        reserved.append((s, e))
+    reserved.sort(key=lambda x: x[0])
+
+    def next_available_time(t: datetime, duration_min: int) -> datetime:
+        """Return the earliest start time at/after t that fits without overlapping reserved intervals."""
+        if not reserved:
+            return t
+        while True:
+            moved = False
+            block_end = t + timedelta(minutes=duration_min)
+            for rs, re in reserved:
+                # Already past this reserved block.
+                if re <= t:
+                    continue
+                # If we're inside a reserved block, jump to its end.
+                if rs <= t < re:
+                    t = re
+                    moved = True
+                    break
+                # If this candidate block would overlap the next reserved block, but we don't have enough room, skip it.
+                if t < rs and block_end > rs:
+                    # Not enough gap to place this block: jump to end of reserved interval.
+                    t = re
+                    moved = True
+                    break
+            if not moved:
+                return t
     
     for task in tasks:
         # Skip if manually scheduled (system doesn't move these)
@@ -78,6 +115,7 @@ def schedule_tasks(
         
         while remaining_duration > 0:
             block_duration = min(remaining_duration, SCHEDULING_GRANULARITY_MINUTES)
+            task_start = next_available_time(task_start, block_duration)
             block_end = task_start + timedelta(minutes=block_duration)
             
             block = ScheduledBlock(

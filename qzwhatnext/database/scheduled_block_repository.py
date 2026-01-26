@@ -9,6 +9,7 @@ from qzwhatnext.models.scheduled_block import ScheduledBlock
 from qzwhatnext.database.models import ScheduledBlockDB
 
 logger = logging.getLogger(__name__)
+_UNSET = object()
 
 
 class ScheduledBlockRepository:
@@ -37,6 +38,101 @@ class ScheduledBlockRepository:
             ScheduledBlockDB.user_id == user_id
         ).order_by(ScheduledBlockDB.start_time).all()
         return [block_db.to_pydantic() for block_db in blocks_db]
+
+    def get_by_id(self, user_id: str, block_id: str) -> Optional[ScheduledBlock]:
+        """Get a scheduled block by ID (user-scoped)."""
+        row = (
+            self.db.query(ScheduledBlockDB)
+            .filter(ScheduledBlockDB.user_id == user_id, ScheduledBlockDB.id == block_id)
+            .first()
+        )
+        return row.to_pydantic() if row else None
+
+    def update_calendar_sync_metadata(
+        self,
+        user_id: str,
+        block_id: str,
+        *,
+        calendar_event_id=_UNSET,
+        calendar_event_etag=_UNSET,
+        calendar_event_updated_at=_UNSET,
+    ) -> Optional[ScheduledBlock]:
+        """Update calendar sync metadata for a block.
+
+        Uses an UNSET sentinel so callers can explicitly clear values by passing None.
+        """
+        try:
+            row = (
+                self.db.query(ScheduledBlockDB)
+                .filter(ScheduledBlockDB.user_id == user_id, ScheduledBlockDB.id == block_id)
+                .first()
+            )
+            if row is None:
+                return None
+            if calendar_event_id is not _UNSET:
+                row.calendar_event_id = calendar_event_id
+            if calendar_event_etag is not _UNSET:
+                row.calendar_event_etag = calendar_event_etag
+            if calendar_event_updated_at is not _UNSET:
+                row.calendar_event_updated_at = calendar_event_updated_at
+            self.db.commit()
+            self.db.refresh(row)
+            return row.to_pydantic()
+        except Exception as e:
+            self.db.rollback()
+            logger.error(
+                f"Failed to update calendar sync metadata for block {block_id}: {type(e).__name__}: {str(e)}"
+            )
+            raise
+
+    def set_locked(self, user_id: str, block_id: str, locked: bool) -> Optional[ScheduledBlock]:
+        """Lock/unlock a scheduled block (user-scoped)."""
+        try:
+            row = (
+                self.db.query(ScheduledBlockDB)
+                .filter(ScheduledBlockDB.user_id == user_id, ScheduledBlockDB.id == block_id)
+                .first()
+            )
+            if row is None:
+                return None
+            row.locked = bool(locked)
+            self.db.commit()
+            self.db.refresh(row)
+            return row.to_pydantic()
+        except Exception as e:
+            self.db.rollback()
+            logger.error(f"Failed to set locked={locked} for block {block_id}: {type(e).__name__}: {str(e)}")
+            raise
+
+    def update_times_and_lock(
+        self,
+        user_id: str,
+        block_id: str,
+        *,
+        start_time,
+        end_time,
+        lock: bool,
+    ) -> Optional[ScheduledBlock]:
+        """Update block times, and optionally set locked=true (user-scoped)."""
+        try:
+            row = (
+                self.db.query(ScheduledBlockDB)
+                .filter(ScheduledBlockDB.user_id == user_id, ScheduledBlockDB.id == block_id)
+                .first()
+            )
+            if row is None:
+                return None
+            row.start_time = start_time
+            row.end_time = end_time
+            if lock:
+                row.locked = True
+            self.db.commit()
+            self.db.refresh(row)
+            return row.to_pydantic()
+        except Exception as e:
+            self.db.rollback()
+            logger.error(f"Failed to update times for block {block_id}: {type(e).__name__}: {str(e)}")
+            raise
     
     def delete_all_for_user(self, user_id: str) -> int:
         """Delete all scheduled blocks for a user (used when rebuilding schedule).
@@ -54,6 +150,25 @@ class ScheduledBlockRepository:
         except Exception as e:
             self.db.rollback()
             logger.error(f"Failed to delete scheduled blocks for user {user_id}: {type(e).__name__}: {str(e)}")
+            raise
+
+    def delete_unlocked_for_user(self, user_id: str) -> int:
+        """Delete all unlocked scheduled blocks for a user.
+
+        This is used when rebuilding schedule while preserving locked blocks (frozen placements).
+        """
+        try:
+            deleted_count = (
+                self.db.query(ScheduledBlockDB)
+                .filter(ScheduledBlockDB.user_id == user_id, ScheduledBlockDB.locked.is_(False))
+                .delete()
+            )
+            self.db.commit()
+            logger.debug(f"Deleted {deleted_count} unlocked scheduled blocks for user {user_id}")
+            return int(deleted_count)
+        except Exception as e:
+            self.db.rollback()
+            logger.error(f"Failed to delete unlocked scheduled blocks for user {user_id}: {type(e).__name__}: {str(e)}")
             raise
     
     def create_batch(self, blocks: List[ScheduledBlock]) -> List[ScheduledBlock]:

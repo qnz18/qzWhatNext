@@ -207,6 +207,17 @@ Rebuilds must be deterministic given identical inputs.
 
 ---
 
+### 5.1 Google Calendar Sync (Managed Events)
+
+Calendar sync is **idempotent** and **bidirectional** for qzWhatNext-managed events:
+- The system only creates/updates events it can prove it owns (managed marker + block linkage and/or stored `calendar_event_id`).
+- If a user edits a managed event in Google Calendar, the change is imported back into qzWhatNext on the next calendar sync.
+- If the user changes date/time in Calendar, qzWhatNext sets the corresponding `ScheduledBlock.locked=true` (freeze) so future rebuilds do not move it unless explicitly unlocked.
+
+Calendar edits to managed events do **not** trigger automatic rebuilds (to avoid loops); they are applied during calendar sync.
+
+---
+
 ## 6. Attribute Inference (AI Hooks)
 
 ### 6.1 Allowed AI Inference

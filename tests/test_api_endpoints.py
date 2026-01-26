@@ -404,12 +404,162 @@ class TestGoogleCalendarSync:
             return_value=MagicMock(),
         ), patch(
             "qzwhatnext.api.app.GoogleCalendarClient.create_event_from_block",
-            return_value={"id": "evt_123"},
+            return_value={"id": "evt_123", "etag": "etag_1", "updated": "2026-01-26T00:00:00Z"},
         ):
             sync = test_client.post("/sync-calendar")
             assert sync.status_code == 200
             payload = sync.json()
             assert payload["events_created"] >= 1
             assert isinstance(payload["event_ids"], list)
+
+    def test_sync_calendar_idempotent_second_run_does_not_create_again(self, test_client):
+        """Second /sync-calendar run should not recreate already-synced events."""
+        r = test_client.post("/tasks", json={"title": "Calendar Task 3", "category": "work", "estimated_duration_min": 30})
+        assert r.status_code == 201
+        build = test_client.post("/schedule")
+        assert build.status_code == 200
+
+        auth_url_resp = test_client.get("/auth/google/calendar/auth-url")
+        assert auth_url_resp.status_code == 200
+        auth_url = auth_url_resp.json()["url"]
+        qs = parse_qs(urlparse(auth_url).query)
+        state = qs.get("state", [None])[0]
+        assert state
+
+        mock_token_resp = MagicMock()
+        mock_token_resp.ok = True
+        mock_token_resp.json.return_value = {
+            "access_token": "test_access_token_value",
+            "refresh_token": "test_refresh_token_value",
+            "expires_in": 3600,
+            "scope": "https://www.googleapis.com/auth/calendar",
+            "token_type": "Bearer",
+        }
+
+        with patch("qzwhatnext.api.app.requests.post", return_value=mock_token_resp):
+            cb = test_client.get("/auth/google/calendar/callback", params={"code": "test-code", "state": state})
+            assert cb.status_code == 200
+
+        # First run creates.
+        with patch("qzwhatnext.api.app.GoogleCredentials.refresh", return_value=None), patch(
+            "qzwhatnext.integrations.google_calendar.build",
+            return_value=MagicMock(),
+        ), patch(
+            "qzwhatnext.api.app.GoogleCalendarClient.create_event_from_block",
+            return_value={"id": "evt_abc", "etag": "etag_a", "updated": "2026-01-26T00:00:00Z"},
+        ) as create_mock:
+            sync1 = test_client.post("/sync-calendar")
+            assert sync1.status_code == 200
+            assert create_mock.call_count >= 1
+
+        # Second run should not call create again (it should use persisted calendar_event_id + get_event).
+        with patch("qzwhatnext.api.app.GoogleCredentials.refresh", return_value=None), patch(
+            "qzwhatnext.integrations.google_calendar.build",
+            return_value=MagicMock(),
+        ), patch(
+            "qzwhatnext.api.app.GoogleCalendarClient.get_event",
+            return_value={
+                "id": "evt_abc",
+                "etag": "etag_a",
+                "updated": "2026-01-26T00:00:00Z",
+                "summary": "Calendar Task 3",
+                "description": None,
+                "start": {"dateTime": "2026-01-26T00:00:00Z"},
+                "end": {"dateTime": "2026-01-26T00:30:00Z"},
+                "extendedProperties": {"private": {"qzwhatnext_task_id": "x", "qzwhatnext_block_id": "y", "qzwhatnext_managed": "1"}},
+            },
+        ), patch(
+            "qzwhatnext.api.app.GoogleCalendarClient.create_event_from_block",
+        ) as create_mock2:
+            sync2 = test_client.post("/sync-calendar")
+            assert sync2.status_code == 200
+            assert create_mock2.call_count == 0
+
+    def test_calendar_edit_imports_and_locks_block(self, test_client):
+        """If a managed calendar event time changes, sync imports it and freezes the block."""
+        # Create a task and build schedule so blocks exist.
+        r = test_client.post("/tasks", json={"title": "Calendar Task 4", "category": "work", "estimated_duration_min": 30})
+        assert r.status_code == 201
+        build = test_client.post("/schedule")
+        assert build.status_code == 200
+        blocks = build.json()["scheduled_blocks"]
+        assert blocks
+        block_id = blocks[0]["id"]
+
+        # Pretend the block is already linked to an event.
+        from qzwhatnext.database.scheduled_block_repository import ScheduledBlockRepository
+        from qzwhatnext.database.database import get_db
+        # Use the overridden db via dependency directly in app tests: call repo on test fixture's session.
+        # We can fetch the session through the dependency override by requesting schedule again and using its state;
+        # simplest here: call unlock endpoint later to verify lock state.
+
+        # OAuth connect
+        auth_url_resp = test_client.get("/auth/google/calendar/auth-url")
+        qs = parse_qs(urlparse(auth_url_resp.json()["url"]).query)
+        state = qs.get("state", [None])[0]
+        mock_token_resp = MagicMock()
+        mock_token_resp.ok = True
+        mock_token_resp.json.return_value = {
+            "access_token": "test_access_token_value",
+            "refresh_token": "test_refresh_token_value",
+            "expires_in": 3600,
+            "scope": "https://www.googleapis.com/auth/calendar",
+            "token_type": "Bearer",
+        }
+        with patch("qzwhatnext.api.app.requests.post", return_value=mock_token_resp):
+            cb = test_client.get("/auth/google/calendar/callback", params={"code": "test-code", "state": state})
+            assert cb.status_code == 200
+
+        # First sync creates and stores metadata.
+        with patch("qzwhatnext.api.app.GoogleCredentials.refresh", return_value=None), patch(
+            "qzwhatnext.integrations.google_calendar.build",
+            return_value=MagicMock(),
+        ), patch(
+            "qzwhatnext.api.app.GoogleCalendarClient.create_event_from_block",
+            return_value={"id": "evt_lock", "etag": "etag_0", "updated": "2026-01-26T00:00:00Z"},
+        ):
+            sync1 = test_client.post("/sync-calendar")
+            assert sync1.status_code == 200
+
+        # Second sync sees a changed etag + updated + time and should lock the block.
+        with patch("qzwhatnext.api.app.GoogleCredentials.refresh", return_value=None), patch(
+            "qzwhatnext.integrations.google_calendar.build",
+            return_value=MagicMock(),
+        ), patch(
+            "qzwhatnext.api.app.GoogleCalendarClient.get_event",
+            return_value={
+                "id": "evt_lock",
+                "etag": "etag_1",
+                "updated": "2026-01-26T01:00:00Z",
+                "summary": "Calendar Task 4",
+                "description": None,
+                "start": {"dateTime": "2026-01-26T02:00:00Z"},
+                "end": {"dateTime": "2026-01-26T02:30:00Z"},
+                "extendedProperties": {"private": {"qzwhatnext_task_id": "x", "qzwhatnext_block_id": block_id, "qzwhatnext_managed": "1"}},
+            },
+        ):
+            sync2 = test_client.post("/sync-calendar")
+            assert sync2.status_code == 200
+
+        schedule_after = test_client.get("/schedule")
+        assert schedule_after.status_code == 200
+        updated_block = [b for b in schedule_after.json()["scheduled_blocks"] if b["id"] == block_id][0]
+        assert updated_block["locked"] is True
+
+    def test_lock_unlock_endpoints_toggle_locked(self, test_client):
+        """Lock/unlock endpoints should toggle ScheduledBlock.locked."""
+        r = test_client.post("/tasks", json={"title": "Lock Toggle Task", "category": "work", "estimated_duration_min": 30})
+        assert r.status_code == 201
+        build = test_client.post("/schedule")
+        assert build.status_code == 200
+        block_id = build.json()["scheduled_blocks"][0]["id"]
+
+        lock = test_client.post(f"/schedule/blocks/{block_id}/lock")
+        assert lock.status_code == 200
+        assert lock.json()["block"]["locked"] is True
+
+        unlock = test_client.post(f"/schedule/blocks/{block_id}/unlock")
+        assert unlock.status_code == 200
+        assert unlock.json()["block"]["locked"] is False
 
 
