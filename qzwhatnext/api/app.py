@@ -963,7 +963,12 @@ async def root():
 
                     if (!response.ok) {
                         const detail = (data && data.detail) ? String(data.detail) : `Sync failed (HTTP ${response.status})`;
-                        if (response.status === 400 && detail.includes('Google Calendar not connected')) {
+                        const needsReconnect =
+                            response.status === 400 &&
+                            (detail.includes('Google Calendar not connected') ||
+                             detail.includes('authorization expired') ||
+                             detail.includes('expired or was revoked'));
+                        if (needsReconnect) {
                             status.innerHTML = 'Connecting Google Calendar...';
                             await connectGoogleCalendar(version);
                             if (isStale(version)) return;
