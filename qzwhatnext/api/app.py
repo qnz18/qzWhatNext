@@ -2122,9 +2122,20 @@ async def sync_calendar(
             creds.refresh(GoogleAuthRequest())
         except Exception as e:
             logger.warning(f"Google Calendar refresh failed for user {current_user.id}: {type(e).__name__}: {str(e)}")
+            # If the refresh token is revoked/expired, clear it so the next sync forces reconnect.
+            msg = str(e).lower()
+            if "invalid_grant" in msg or "expired" in msg or "revoked" in msg:
+                try:
+                    token_repo.delete_google_calendar(current_user.id)
+                except Exception:
+                    # Best effort; never hide the original auth failure.
+                    pass
             raise HTTPException(
                 status_code=400,
-                detail="Google Calendar authorization expired or was revoked. Reconnect via /auth/google/calendar/auth-url (or click Sync in the UI).",
+                detail=(
+                    "Google Calendar authorization expired or was revoked. "
+                    "Reconnect via /auth/google/calendar/auth-url (or click Sync in the UI)."
+                ),
             )
 
         calendar_client = GoogleCalendarClient(credentials=creds, calendar_id="primary")

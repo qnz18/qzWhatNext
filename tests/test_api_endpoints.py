@@ -562,4 +562,48 @@ class TestGoogleCalendarSync:
         assert unlock.status_code == 200
         assert unlock.json()["block"]["locked"] is False
 
+    def test_sync_calendar_invalid_grant_clears_token_and_forces_reconnect(self, test_client):
+        """If Google refresh fails with invalid_grant, the stored calendar token is cleared."""
+        # Create a task and build schedule so blocks exist.
+        r = test_client.post("/tasks", json={"title": "Calendar Task invalid_grant", "category": "work", "estimated_duration_min": 30})
+        assert r.status_code == 201
+        build = test_client.post("/schedule")
+        assert build.status_code == 200
+
+        # Connect calendar (store refresh token).
+        auth_url_resp = test_client.get("/auth/google/calendar/auth-url")
+        assert auth_url_resp.status_code == 200
+        auth_url = auth_url_resp.json()["url"]
+        qs = parse_qs(urlparse(auth_url).query)
+        state = qs.get("state", [None])[0]
+        assert state
+
+        mock_token_resp = MagicMock()
+        mock_token_resp.ok = True
+        mock_token_resp.json.return_value = {
+            "access_token": "test_access_token_value",
+            "refresh_token": "test_refresh_token_value",
+            "expires_in": 3600,
+            "scope": "https://www.googleapis.com/auth/calendar",
+            "token_type": "Bearer",
+        }
+
+        with patch("qzwhatnext.api.app.requests.post", return_value=mock_token_resp):
+            cb = test_client.get("/auth/google/calendar/callback", params={"code": "test-code", "state": state})
+            assert cb.status_code == 200
+
+        # First sync: refresh fails with invalid_grant and should clear stored token row.
+        with patch(
+            "qzwhatnext.api.app.GoogleCredentials.refresh",
+            side_effect=Exception("invalid_grant: Token has been expired or revoked."),
+        ):
+            sync1 = test_client.post("/sync-calendar")
+            assert sync1.status_code == 400
+            assert "expired or was revoked" in sync1.json()["detail"]
+
+        # Second sync: should now report not connected (token row cleared).
+        sync2 = test_client.post("/sync-calendar")
+        assert sync2.status_code == 400
+        assert "not connected" in sync2.json()["detail"].lower()
+
 

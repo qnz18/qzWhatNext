@@ -100,3 +100,20 @@ class GoogleOAuthTokenRepository:
         self.db.refresh(row)
         return row
 
+    def delete_google_calendar(self, user_id: str) -> int:
+        """Delete the stored Google Calendar OAuth token row for a user.
+
+        Returns number of rows deleted (0 or 1).
+        """
+        affected = (
+            self.db.query(GoogleOAuthTokenDB)
+            .filter(
+                GoogleOAuthTokenDB.user_id == user_id,
+                GoogleOAuthTokenDB.provider == PROVIDER_GOOGLE,
+                GoogleOAuthTokenDB.product == PRODUCT_CALENDAR,
+            )
+            .delete(synchronize_session=False)
+        )
+        self.db.commit()
+        return int(affected)
+
