@@ -1,7 +1,7 @@
 """Add ScheduledBlock calendar sync metadata fields
 
 Revision ID: 1c8e2d4f0a21
-Revises: 9ca209918cf6
+Revises: 7b2c9f1f6c20
 Create Date: 2026-01-26
 
 """
@@ -14,7 +14,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "1c8e2d4f0a21"
-down_revision: Union[str, Sequence[str], None] = "9ca209918cf6"
+down_revision: Union[str, Sequence[str], None] = "7b2c9f1f6c20"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
