@@ -2356,10 +2356,22 @@ async def sync_calendar(
                 event_etag = event.get("etag")
                 event_updated_at = _to_utc_naive(_parse_rfc3339(event.get("updated")))
 
-                calendar_changed = (
+                has_baseline = bool(block.calendar_event_etag or block.calendar_event_updated_at)
+                calendar_changed = has_baseline and (
                     (block.calendar_event_etag or "") != (event_etag or "")
                     or (block.calendar_event_updated_at != event_updated_at)
-                ) or (block.calendar_event_etag is None and block.calendar_event_updated_at is None)
+                )
+
+                if not has_baseline:
+                    # First time we see this event with no stored calendar version metadata.
+                    # Record baseline, but do NOT treat it as a user calendar edit.
+                    schedule_repo.update_calendar_sync_metadata(
+                        current_user.id,
+                        block.id,
+                        calendar_event_id=event_id,
+                        calendar_event_etag=event_etag,
+                        calendar_event_updated_at=event_updated_at,
+                    )
 
                 if calendar_changed:
                     # Import calendar time into qzWhatNext and lock if time changed.
