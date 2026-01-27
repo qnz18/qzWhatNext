@@ -1342,7 +1342,8 @@ async def google_calendar_oauth_start(
         "response_type": "code",
         "scope": "https://www.googleapis.com/auth/calendar",
         "access_type": "offline",
-        "prompt": "consent",
+        # Force account chooser + consent so Google reliably returns a refresh_token on reconnect.
+        "prompt": "consent select_account",
         "include_granted_scopes": "true",
         "state": state,
     }
@@ -1375,7 +1376,8 @@ async def google_calendar_oauth_auth_url(
         "response_type": "code",
         "scope": "https://www.googleapis.com/auth/calendar",
         "access_type": "offline",
-        "prompt": "consent",
+        # Force account chooser + consent so Google reliably returns a refresh_token on reconnect.
+        "prompt": "consent select_account",
         "include_granted_scopes": "true",
         "state": state,
     }
@@ -1452,7 +1454,26 @@ async def google_calendar_oauth_callback(
                 status_code=400,
                 detail="Google did not return a refresh token. Please revoke app access in your Google Account and try again.",
             )
-        # Keep existing refresh token; connection is still valid.
+        # Keep existing refresh token only if it is still valid (not revoked).
+        try:
+            existing_refresh = decrypt_secret(existing.refresh_token_encrypted)
+            test_creds = GoogleCredentials(
+                token=None,
+                refresh_token=existing_refresh,
+                token_uri="https://oauth2.googleapis.com/token",
+                client_id=client_id,
+                client_secret=client_secret,
+                scopes=scopes,
+            )
+            test_creds.refresh(GoogleAuthRequest())
+        except Exception:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Google did not return a refresh token, and your existing Calendar authorization is no longer valid. "
+                    "Please revoke qzWhatNext access in your Google Account (Security → Third-party access) and try again."
+                ),
+            )
         html = """<!doctype html>
 <html><body>
 <script>
