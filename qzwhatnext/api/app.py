@@ -2006,6 +2006,16 @@ async def build_schedule(
         # Preserve locked blocks from prior schedule (frozen placements).
         existing_blocks = schedule_repo.get_all(current_user.id)
         locked_blocks = [b for b in existing_blocks if b.locked]
+        unlocked_blocks = [b for b in existing_blocks if not b.locked]
+
+        # Preserve calendar_event_id mappings across rebuild by reusing prior block IDs per-task.
+        # This prevents duplicate calendar events when schedule is rebuilt.
+        unlocked_by_task: Dict[str, List[ScheduledBlock]] = {}
+        for b in unlocked_blocks:
+            if b.entity_type == "task":
+                unlocked_by_task.setdefault(b.entity_id, []).append(b)
+        for tid in unlocked_by_task:
+            unlocked_by_task[tid].sort(key=lambda b: b.start_time)
 
         # Compute reserved intervals (locked time is off-limits for new blocks).
         reserved_intervals = [(b.start_time, b.end_time) for b in locked_blocks]
@@ -2030,6 +2040,31 @@ async def build_schedule(
             schedulable_tasks.append(t.model_copy(update={"estimated_duration_min": remaining}))
 
         schedule_result = schedule_tasks(schedulable_tasks, reserved_intervals=reserved_intervals)
+
+        # Reuse unlocked block IDs + calendar sync metadata where possible (per task, by block order).
+        adjusted_blocks: List[ScheduledBlock] = []
+        new_by_task: Dict[str, List[ScheduledBlock]] = {}
+        for b in schedule_result.scheduled_blocks:
+            if b.entity_type == "task":
+                new_by_task.setdefault(b.entity_id, []).append(b)
+            else:
+                adjusted_blocks.append(b)
+        for tid in new_by_task:
+            new_by_task[tid].sort(key=lambda b: b.start_time)
+            prior = unlocked_by_task.get(tid, [])
+            for i, b in enumerate(new_by_task[tid]):
+                if i < len(prior):
+                    old = prior[i]
+                    b = b.model_copy(
+                        update={
+                            "id": old.id,
+                            "calendar_event_id": old.calendar_event_id,
+                            "calendar_event_etag": getattr(old, "calendar_event_etag", None),
+                            "calendar_event_updated_at": getattr(old, "calendar_event_updated_at", None),
+                        }
+                    )
+                adjusted_blocks.append(b)
+        schedule_result.scheduled_blocks = adjusted_blocks
 
         # Store schedule in database (preserve locked, replace unlocked)
         schedule_repo.delete_unlocked_for_user(current_user.id)
@@ -2141,6 +2176,7 @@ async def sync_calendar(
         calendar_client = GoogleCalendarClient(credentials=creds, calendar_id="primary")
         tasks = task_repo.get_all(current_user.id)
         tasks_dict = {task.id: task for task in tasks}
+        current_block_ids = {b.id for b in blocks}
         
         def _parse_rfc3339(dt_str: Optional[str]) -> Optional[datetime]:
             if not dt_str:
@@ -2187,6 +2223,40 @@ async def sync_calendar(
         event_ids: List[str] = []
 
         schedule_repo = ScheduledBlockRepository(db)
+
+        # Cleanup: delete orphaned qzWhatNext-managed events within the schedule window.
+        try:
+            starts = [b.start_time for b in blocks if b.start_time]
+            ends = [b.end_time for b in blocks if b.end_time]
+            if starts and ends:
+                from datetime import timedelta
+
+                window_start = min(starts) - timedelta(days=2)
+                window_end = max(ends) + timedelta(days=2)
+
+                def _to_rfc3339_z(dt: datetime) -> str:
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    else:
+                        dt = dt.astimezone(timezone.utc)
+                    return dt.isoformat().replace("+00:00", "Z")
+
+                for ev in calendar_client.list_events_in_range(
+                    time_min_rfc3339=_to_rfc3339_z(window_start),
+                    time_max_rfc3339=_to_rfc3339_z(window_end),
+                ):
+                    priv = ((ev.get("extendedProperties") or {}).get("private") or {})
+                    if priv.get(PRIVATE_KEY_MANAGED) != "1":
+                        continue
+                    ev_block_id = priv.get(PRIVATE_KEY_BLOCK_ID)
+                    if not ev_block_id or ev_block_id in current_block_ids:
+                        continue
+                    ev_id = ev.get("id")
+                    if ev_id:
+                        calendar_client.delete_event(ev_id)
+        except Exception:
+            # Best-effort cleanup; never block sync.
+            pass
 
         for block in blocks:
             if block.entity_type != "task":

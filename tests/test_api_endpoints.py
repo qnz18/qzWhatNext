@@ -445,6 +445,9 @@ class TestGoogleCalendarSync:
             "qzwhatnext.integrations.google_calendar.build",
             return_value=MagicMock(),
         ), patch(
+            "qzwhatnext.api.app.GoogleCalendarClient.list_events_in_range",
+            return_value=[],
+        ), patch(
             "qzwhatnext.api.app.GoogleCalendarClient.create_event_from_block",
             return_value={"id": "evt_abc", "etag": "etag_a", "updated": "2026-01-26T00:00:00Z"},
         ) as create_mock:
@@ -456,6 +459,9 @@ class TestGoogleCalendarSync:
         with patch("qzwhatnext.api.app.GoogleCredentials.refresh", return_value=None), patch(
             "qzwhatnext.integrations.google_calendar.build",
             return_value=MagicMock(),
+        ), patch(
+            "qzwhatnext.api.app.GoogleCalendarClient.list_events_in_range",
+            return_value=[],
         ), patch(
             "qzwhatnext.api.app.GoogleCalendarClient.get_event",
             return_value={
@@ -605,5 +611,83 @@ class TestGoogleCalendarSync:
         sync2 = test_client.post("/sync-calendar")
         assert sync2.status_code == 400
         assert "not connected" in sync2.json()["detail"].lower()
+
+    def test_schedule_rebuild_does_not_duplicate_calendar_events(self, test_client):
+        """Rebuilding schedule should reuse prior block IDs so sync updates events instead of duplicating."""
+        # Create a task and build schedule so blocks exist.
+        r = test_client.post("/tasks", json={"title": "Calendar Task rebuild", "category": "work", "estimated_duration_min": 30})
+        assert r.status_code == 201
+        build1 = test_client.post("/schedule")
+        assert build1.status_code == 200
+        block1 = build1.json()["scheduled_blocks"][0]
+        block1_id = block1["id"]
+
+        # Connect calendar.
+        auth_url_resp = test_client.get("/auth/google/calendar/auth-url")
+        assert auth_url_resp.status_code == 200
+        auth_url = auth_url_resp.json()["url"]
+        qs = parse_qs(urlparse(auth_url).query)
+        state = qs.get("state", [None])[0]
+        assert state
+
+        mock_token_resp = MagicMock()
+        mock_token_resp.ok = True
+        mock_token_resp.json.return_value = {
+            "access_token": "test_access_token_value",
+            "refresh_token": "test_refresh_token_value",
+            "expires_in": 3600,
+            "scope": "https://www.googleapis.com/auth/calendar",
+            "token_type": "Bearer",
+        }
+        with patch("qzwhatnext.api.app.requests.post", return_value=mock_token_resp):
+            cb = test_client.get("/auth/google/calendar/callback", params={"code": "test-code", "state": state})
+            assert cb.status_code == 200
+
+        # First sync creates event and persists mapping.
+        with patch("qzwhatnext.api.app.GoogleCredentials.refresh", return_value=None), patch(
+            "qzwhatnext.integrations.google_calendar.build",
+            return_value=MagicMock(),
+        ), patch(
+            "qzwhatnext.api.app.GoogleCalendarClient.list_events_in_range",
+            return_value=[],
+        ), patch(
+            "qzwhatnext.api.app.GoogleCalendarClient.create_event_from_block",
+            return_value={"id": "evt_rebuild", "etag": "etag_r1", "updated": "2026-01-26T00:00:00Z"},
+        ) as create_mock:
+            sync1 = test_client.post("/sync-calendar")
+            assert sync1.status_code == 200
+            assert create_mock.call_count >= 1
+
+        # Rebuild schedule (should reuse same block id for this task).
+        build2 = test_client.post("/schedule")
+        assert build2.status_code == 200
+        block2 = [b for b in build2.json()["scheduled_blocks"] if b["entity_id"] == block1["entity_id"]][0]
+        assert block2["id"] == block1_id
+
+        # Second sync should not create a new event.
+        with patch("qzwhatnext.api.app.GoogleCredentials.refresh", return_value=None), patch(
+            "qzwhatnext.integrations.google_calendar.build",
+            return_value=MagicMock(),
+        ), patch(
+            "qzwhatnext.api.app.GoogleCalendarClient.list_events_in_range",
+            return_value=[],
+        ), patch(
+            "qzwhatnext.api.app.GoogleCalendarClient.get_event",
+            return_value={
+                "id": "evt_rebuild",
+                "etag": "etag_r1",
+                "updated": "2026-01-26T00:00:00Z",
+                "summary": "Calendar Task rebuild",
+                "description": None,
+                "start": {"dateTime": block2["start_time"]},
+                "end": {"dateTime": block2["end_time"]},
+                "extendedProperties": {"private": {"qzwhatnext_task_id": block2["entity_id"], "qzwhatnext_block_id": block2["id"], "qzwhatnext_managed": "1"}},
+            },
+        ), patch(
+            "qzwhatnext.api.app.GoogleCalendarClient.create_event_from_block",
+        ) as create_mock2:
+            sync2 = test_client.post("/sync-calendar")
+            assert sync2.status_code == 200
+            assert create_mock2.call_count == 0
 
 

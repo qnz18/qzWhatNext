@@ -2,7 +2,7 @@
 
 import os
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Iterable
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -180,6 +180,57 @@ class GoogleCalendarClient:
             )
         except HttpError as error:
             raise
+
+    def delete_event(self, event_id: str) -> None:
+        """Delete an event by ID."""
+        try:
+            self.service.events().delete(calendarId=self.calendar_id, eventId=event_id).execute()
+        except HttpError as error:
+            # Deleting a missing event is effectively a no-op.
+            status = getattr(getattr(error, "resp", None), "status", None)
+            if status in (404, 410):
+                return
+            raise
+
+    def list_events_in_range(
+        self,
+        *,
+        time_min_rfc3339: str,
+        time_max_rfc3339: str,
+        max_pages: int = 10,
+    ) -> List[dict]:
+        """List events in a time range (singleEvents) with pagination.
+
+        Args:
+            time_min_rfc3339: RFC3339 timeMin (e.g. 2026-01-01T00:00:00Z)
+            time_max_rfc3339: RFC3339 timeMax
+            max_pages: safety cap on pagination
+        """
+        items: List[dict] = []
+        page_token: Optional[str] = None
+        pages = 0
+        while True:
+            pages += 1
+            if pages > max_pages:
+                break
+            resp = (
+                self.service.events()
+                .list(
+                    calendarId=self.calendar_id,
+                    timeMin=time_min_rfc3339,
+                    timeMax=time_max_rfc3339,
+                    singleEvents=True,
+                    orderBy="startTime",
+                    pageToken=page_token,
+                    maxResults=2500,
+                )
+                .execute()
+            )
+            items.extend(resp.get("items") or [])
+            page_token = resp.get("nextPageToken")
+            if not page_token:
+                break
+        return items
     
     def create_events_from_blocks(
         self,
