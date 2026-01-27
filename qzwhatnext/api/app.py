@@ -632,6 +632,8 @@ async def root():
                 }
                 setAuthStatus('Signed in.');
                 await viewTasks(version);
+                // Load schedule on refresh so it doesn't appear to "disappear".
+                try { await viewSchedule(version); } catch (e) { /* ignore */ }
                 await loadShortcutTokenStatus(version);
             }
 
@@ -671,6 +673,7 @@ async def root():
                     await refreshMe(version);
                     if (isStale(version)) return;
                     await viewTasks(version);
+                    try { await viewSchedule(version); } catch (e) { /* ignore */ }
                     await loadShortcutTokenStatus(version);
                 } catch (e) {
                     console.error('Auth error:', e);
@@ -1191,7 +1194,13 @@ async def root():
                     scheduleDiv.innerHTML = html;
                 } catch (error) {
                     if (isStale(version)) return;
-                    scheduleDiv.innerHTML = 'Error: ' + error.message;
+                    // Treat "no schedule" as a normal empty state, not an error.
+                    const msg = error && error.message ? String(error.message) : String(error);
+                    if (msg && msg.toLowerCase().includes('no schedule available')) {
+                        scheduleDiv.innerHTML = '<p>No schedule available. Build a schedule first.</p>';
+                        return;
+                    }
+                    scheduleDiv.innerHTML = 'Error: ' + msg;
                 }
             }
 
