@@ -147,7 +147,8 @@ class GoogleCalendarClient:
         except HttpError as error:
             # If the event was deleted from Calendar, treat as missing.
             status = getattr(getattr(error, "resp", None), "status", None)
-            if status == 404:
+            # Google may return 404 (not found) or 410 (gone) for deleted events.
+            if status in (404, 410):
                 return None
             raise
 

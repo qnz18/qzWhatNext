@@ -2282,7 +2282,8 @@ async def sync_calendar(
                 # 1) Prefer direct lookup by persisted event id
                 if event_id:
                     event = calendar_client.get_event(event_id)
-                    if event is None:
+                    # If the event was deleted in Google Calendar, treat as missing so we recreate it.
+                    if event is None or (isinstance(event, dict) and event.get("status") == "cancelled"):
                         # Event missing (deleted). Clear mapping so we can recreate.
                         schedule_repo.update_calendar_sync_metadata(
                             current_user.id,
@@ -2292,6 +2293,7 @@ async def sync_calendar(
                             calendar_event_updated_at=None,
                         )
                         event_id = None
+                        event = None
 
                 # 2) Fallback: find existing event by private block id (legacy / adopted)
                 if event is None and not event_id:

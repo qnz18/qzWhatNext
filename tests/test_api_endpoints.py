@@ -690,4 +690,65 @@ class TestGoogleCalendarSync:
             assert sync2.status_code == 200
             assert create_mock2.call_count == 0
 
+    def test_sync_recreates_event_if_deleted_in_calendar(self, test_client):
+        """If the user deletes a managed event, sync should recreate it."""
+        r = test_client.post("/tasks", json={"title": "Calendar Task deleted", "category": "work", "estimated_duration_min": 30})
+        assert r.status_code == 201
+        build = test_client.post("/schedule")
+        assert build.status_code == 200
+
+        # Connect calendar.
+        auth_url_resp = test_client.get("/auth/google/calendar/auth-url")
+        assert auth_url_resp.status_code == 200
+        auth_url = auth_url_resp.json()["url"]
+        qs = parse_qs(urlparse(auth_url).query)
+        state = qs.get("state", [None])[0]
+        assert state
+
+        mock_token_resp = MagicMock()
+        mock_token_resp.ok = True
+        mock_token_resp.json.return_value = {
+            "access_token": "test_access_token_value",
+            "refresh_token": "test_refresh_token_value",
+            "expires_in": 3600,
+            "scope": "https://www.googleapis.com/auth/calendar",
+            "token_type": "Bearer",
+        }
+        with patch("qzwhatnext.api.app.requests.post", return_value=mock_token_resp):
+            cb = test_client.get("/auth/google/calendar/callback", params={"code": "test-code", "state": state})
+            assert cb.status_code == 200
+
+        # First sync creates the event.
+        with patch("qzwhatnext.api.app.GoogleCredentials.refresh", return_value=None), patch(
+            "qzwhatnext.integrations.google_calendar.build",
+            return_value=MagicMock(),
+        ), patch(
+            "qzwhatnext.api.app.GoogleCalendarClient.list_events_in_range",
+            return_value=[],
+        ), patch(
+            "qzwhatnext.api.app.GoogleCalendarClient.create_event_from_block",
+            return_value={"id": "evt_deleted_1", "etag": "etag_d1", "updated": "2026-01-26T00:00:00Z"},
+        ) as create_mock:
+            sync1 = test_client.post("/sync-calendar")
+            assert sync1.status_code == 200
+            assert create_mock.call_count >= 1
+
+        # Second sync: event is "deleted" in Calendar (status cancelled), so we should recreate.
+        with patch("qzwhatnext.api.app.GoogleCredentials.refresh", return_value=None), patch(
+            "qzwhatnext.integrations.google_calendar.build",
+            return_value=MagicMock(),
+        ), patch(
+            "qzwhatnext.api.app.GoogleCalendarClient.list_events_in_range",
+            return_value=[],
+        ), patch(
+            "qzwhatnext.api.app.GoogleCalendarClient.get_event",
+            return_value={"id": "evt_deleted_1", "status": "cancelled"},
+        ), patch(
+            "qzwhatnext.api.app.GoogleCalendarClient.create_event_from_block",
+            return_value={"id": "evt_deleted_2", "etag": "etag_d2", "updated": "2026-01-26T00:10:00Z"},
+        ) as create_mock2:
+            sync2 = test_client.post("/sync-calendar")
+            assert sync2.status_code == 200
+            assert create_mock2.call_count >= 1
+
 
