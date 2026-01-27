@@ -6,7 +6,7 @@ This module supports both:
 """
 
 import os
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.ext.declarative import declarative_base
@@ -155,4 +155,23 @@ def init_db():
     # Default behavior: create schema directly.
     Base.metadata.create_all(bind=engine)
     ensure_legacy_schema_compat()
+
+    # Minimal, idempotent Postgres compatibility patch.
+    #
+    # If Cloud Run deploys with Postgres but without running Alembic migrations,
+    # create_all() will not add new columns to existing tables.
+    if not _is_sqlite_url(DATABASE_URL):
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "ALTER TABLE scheduled_blocks "
+                    "ADD COLUMN IF NOT EXISTS calendar_event_etag VARCHAR"
+                )
+            )
+            conn.execute(
+                text(
+                    "ALTER TABLE scheduled_blocks "
+                    "ADD COLUMN IF NOT EXISTS calendar_event_updated_at TIMESTAMP"
+                )
+            )
 
