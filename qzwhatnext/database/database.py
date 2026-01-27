@@ -81,18 +81,21 @@ def _sqlite_table_has_column(dbapi_conn, table_name: str, column_name: str) -> b
         cursor.close()
 
 
-def ensure_legacy_schema_compat() -> None:
+def ensure_legacy_schema_compat(*, engine_override: Engine = None, database_url_override: str = None) -> None:
     """Ensure legacy SQLite DB files are compatible with the current schema.
 
     This is intentionally minimal and deterministic: if the DB was created before we
     introduced multi-user support, it may be missing `tasks.user_id`. SQLite
     `create_all()` does not alter existing tables, so we patch the column in place.
     """
-    if not _is_sqlite_url(DATABASE_URL):
+    database_url = database_url_override or DATABASE_URL
+    if not _is_sqlite_url(database_url):
         return
 
+    use_engine = engine_override or engine
+
     # Use raw DB-API connection for PRAGMA and ALTER TABLE
-    dbapi_conn = engine.raw_connection()
+    dbapi_conn = use_engine.raw_connection()
     try:
         # If tasks exists but lacks user_id, add it (nullable for legacy rows).
         if _sqlite_table_has_column(dbapi_conn, "tasks", "id") and not _sqlite_table_has_column(dbapi_conn, "tasks", "user_id"):
@@ -100,6 +103,18 @@ def ensure_legacy_schema_compat() -> None:
             try:
                 cursor.execute("ALTER TABLE tasks ADD COLUMN user_id VARCHAR")
                 cursor.execute("CREATE INDEX IF NOT EXISTS ix_tasks_user_id ON tasks (user_id)")
+                dbapi_conn.commit()
+            finally:
+                cursor.close()
+
+        # If scheduled_blocks exists but lacks newly-added calendar sync metadata columns, add them.
+        if _sqlite_table_has_column(dbapi_conn, "scheduled_blocks", "id"):
+            cursor = dbapi_conn.cursor()
+            try:
+                if not _sqlite_table_has_column(dbapi_conn, "scheduled_blocks", "calendar_event_etag"):
+                    cursor.execute("ALTER TABLE scheduled_blocks ADD COLUMN calendar_event_etag VARCHAR")
+                if not _sqlite_table_has_column(dbapi_conn, "scheduled_blocks", "calendar_event_updated_at"):
+                    cursor.execute("ALTER TABLE scheduled_blocks ADD COLUMN calendar_event_updated_at DATETIME")
                 dbapi_conn.commit()
             finally:
                 cursor.close()
