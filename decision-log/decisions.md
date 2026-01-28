@@ -718,6 +718,27 @@ Prevents duplicate events, preserves user fixes made directly in Calendar, and k
 
 ---
 
+## D-039 — Unified Google Consent for Web Login (MVP)
+
+**Decision:**  
+When configured, the web UI uses a **single Google OAuth consent** to obtain both:
+- **Identity** (via `id_token`, verified server-side), and
+- **Google Calendar authorization** (via a per-user **refresh token** stored encrypted at rest).
+
+qzWhatNext still issues its own server-signed JWT for API access.
+
+**Rationale:**  
+For a calendar-first product, asking users to “log in” and then separately “connect calendar” creates unnecessary friction and feels like duplicative trust asks.
+
+**Implications:**  
+- Requires `GOOGLE_OAUTH_CLIENT_SECRET` and `TOKEN_ENCRYPTION_KEY` for unified login+calendar consent.
+- If unified consent is not configured, the system falls back to identity-only login and Calendar is connected on demand (existing `/auth/google/calendar/*` flow).
+- This supersedes the D-037 implication that Calendar connect must happen only via `/auth/google/calendar/start` for all users; reconnect endpoints remain for recovery/revocation scenarios.
+
+**Status:** Locked
+
+---
+
 ## Canonical Rule
 
 If a future behavior conflicts with a decision in this log:

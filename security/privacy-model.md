@@ -1,7 +1,7 @@
 ### qzWhatNext – Privacy Model (Canonical)
 
 **Version:** 0.1.1  
-**Last Updated:** 2026-01-17  
+**Last Updated:** 2026-01-28  
 **Status:** Locked (MVP)
 
 This document describes what user data is stored, how it is protected, and what is shared externally.
@@ -37,6 +37,18 @@ Third-party calls may occur only when explicitly configured:
 - Optional OpenAI inference for non-excluded tasks
 
 **AI-excluded tasks** must never be sent to AI.
+
+---
+
+### 3.1 Google Calendar Data Minimization (MVP)
+
+When Google Calendar is connected, qzWhatNext uses Calendar to compute availability for scheduling.
+
+For **non-qzWhatNext-managed** calendar events, qzWhatNext reads **only**:
+- start time
+- end time
+
+It does **not** need (and does not persist) event titles, descriptions, attendees, locations, or conferencing metadata to enforce “do not schedule during this time.”
 
 ---
 

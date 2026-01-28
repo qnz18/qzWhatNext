@@ -5,10 +5,47 @@ These tests verify API endpoints work correctly end-to-end.
 
 import pytest
 from datetime import datetime, timedelta
+from typing import Optional, List, Dict
 from fastapi.testclient import TestClient
 from qzwhatnext.models.task import TaskStatus, TaskCategory, EnergyIntensity
 from urllib.parse import urlparse, parse_qs
 from unittest.mock import patch, MagicMock
+
+
+def _connect_google_calendar(test_client: TestClient) -> None:
+    """Connect Calendar via OAuth callback (mock token exchange)."""
+    auth_url_resp = test_client.get("/auth/google/calendar/auth-url")
+    assert auth_url_resp.status_code == 200
+    auth_url = auth_url_resp.json()["url"]
+    qs = parse_qs(urlparse(auth_url).query)
+    state = qs.get("state", [None])[0]
+    assert state
+
+    mock_token_resp = MagicMock()
+    mock_token_resp.ok = True
+    mock_token_resp.json.return_value = {
+        # Avoid real token patterns (secret scanner will flag them).
+        "access_token": "test_access_token_value",
+        "refresh_token": "test_refresh_token_value",
+        "expires_in": 3600,
+        "scope": "https://www.googleapis.com/auth/calendar",
+        "token_type": "Bearer",
+    }
+    with patch("qzwhatnext.api.app.requests.post", return_value=mock_token_resp):
+        cb = test_client.get("/auth/google/calendar/callback", params={"code": "test-code", "state": state})
+        assert cb.status_code == 200
+
+
+def _post_schedule_with_calendar(test_client: TestClient, *, events: Optional[List[Dict]] = None):
+    """POST /schedule with Calendar mocks (no network)."""
+    with patch("qzwhatnext.api.app.GoogleCredentials.refresh", return_value=None), patch(
+        "qzwhatnext.integrations.google_calendar.build",
+        return_value=MagicMock(),
+    ), patch(
+        "qzwhatnext.api.app.GoogleCalendarClient.list_events_in_range",
+        return_value=(events or []),
+    ):
+        return test_client.post("/schedule")
 
 
 class TestTaskEndpoints:
@@ -218,7 +255,8 @@ class TestTaskEndpoints:
         )
         task_id = create_response.json()["task"]["id"]
 
-        build_response = test_client.post("/schedule")
+        _connect_google_calendar(test_client)
+        build_response = _post_schedule_with_calendar(test_client)
         assert build_response.status_code == 200
 
         schedule_before = test_client.get("/schedule")
@@ -289,8 +327,9 @@ class TestScheduleEndpoints:
             "/tasks",
             json={"title": "Task 2", "category": "health", "estimated_duration_min": 60}
         )
-        
-        response = test_client.post("/schedule")
+
+        _connect_google_calendar(test_client)
+        response = _post_schedule_with_calendar(test_client)
         
         assert response.status_code == 200
         data = response.json()
@@ -298,6 +337,37 @@ class TestScheduleEndpoints:
         assert "overflow_tasks" in data
         assert "start_time" in data
         assert len(data["scheduled_blocks"]) > 0
+
+    def test_build_schedule_requires_calendar_connected(self, test_client):
+        """If tasks exist but Calendar is not connected, /schedule should 400."""
+        r = test_client.post("/tasks", json={"title": "Needs Calendar", "category": "work", "estimated_duration_min": 30})
+        assert r.status_code == 201
+
+        response = test_client.post("/schedule")
+        assert response.status_code == 400
+        assert "not connected" in response.json()["detail"].lower()
+
+    def test_build_schedule_avoids_non_managed_calendar_busy_time(self, test_client):
+        """Non-managed calendar events should reserve time using only start/end windows."""
+        r = test_client.post("/tasks", json={"title": "Avoid Busy", "category": "work", "estimated_duration_min": 30})
+        assert r.status_code == 201
+
+        _connect_google_calendar(test_client)
+
+        now = datetime.utcnow()
+        busy_start = now - timedelta(minutes=5)
+        busy_end = now + timedelta(hours=2)
+        busy_event = {
+            "start": {"dateTime": busy_start.isoformat() + "Z"},
+            "end": {"dateTime": busy_end.isoformat() + "Z"},
+        }
+
+        build = _post_schedule_with_calendar(test_client, events=[busy_event])
+        assert build.status_code == 200
+        blocks = build.json()["scheduled_blocks"]
+        assert blocks
+        first_start = datetime.fromisoformat(blocks[0]["start_time"])
+        assert first_start >= busy_end
     
     def test_view_schedule_not_built(self, test_client):
         """Test viewing schedule when none has been built."""
@@ -313,7 +383,9 @@ class TestScheduleEndpoints:
             "/tasks",
             json={"title": "Scheduled Task", "category": "work", "estimated_duration_min": 30}
         )
-        test_client.post("/schedule")
+        _connect_google_calendar(test_client)
+        build = _post_schedule_with_calendar(test_client)
+        assert build.status_code == 200
         
         response = test_client.get("/schedule")
         
@@ -353,13 +425,27 @@ class TestRootEndpoint:
 
 
 class TestGoogleCalendarSync:
-    def test_sync_calendar_requires_connected_calendar(self, test_client):
+    def test_sync_calendar_requires_connected_calendar(self, test_client, db_session, test_user_id):
         """If schedule exists but calendar isn't connected, /sync-calendar should 400."""
-        # Create a task and build schedule so blocks exist.
-        r = test_client.post("/tasks", json={"title": "Calendar Task", "category": "work", "estimated_duration_min": 30})
-        assert r.status_code == 201
-        build = test_client.post("/schedule")
-        assert build.status_code == 200
+        # Create a scheduled block directly (since /schedule now requires Calendar).
+        from qzwhatnext.database.scheduled_block_repository import ScheduledBlockRepository
+        from qzwhatnext.models.scheduled_block import ScheduledBlock, EntityType, ScheduledBy
+        import uuid
+
+        repo = ScheduledBlockRepository(db_session)
+        now = datetime.utcnow()
+        repo.create(
+            ScheduledBlock(
+                id=str(uuid.uuid4()),
+                user_id=test_user_id,
+                entity_type=EntityType.TASK,
+                entity_id="task_x",
+                start_time=now,
+                end_time=now + timedelta(minutes=30),
+                scheduled_by=ScheduledBy.SYSTEM,
+                locked=False,
+            )
+        )
 
         sync = test_client.post("/sync-calendar")
         assert sync.status_code == 400
@@ -367,36 +453,13 @@ class TestGoogleCalendarSync:
 
     def test_oauth_callback_stores_token_and_syncs(self, test_client):
         """OAuth callback should store refresh token, and /sync-calendar should create events."""
-        # Create a task and build schedule so blocks exist.
+        # Create a task, connect calendar, and build schedule so blocks exist.
         r = test_client.post("/tasks", json={"title": "Calendar Task 2", "category": "work", "estimated_duration_min": 30})
         assert r.status_code == 201
-        build = test_client.post("/schedule")
+        _connect_google_calendar(test_client)
+
+        build = _post_schedule_with_calendar(test_client, events=[])
         assert build.status_code == 200
-
-        # Fetch auth URL to obtain a valid signed state.
-        auth_url_resp = test_client.get("/auth/google/calendar/auth-url")
-        assert auth_url_resp.status_code == 200
-        auth_url = auth_url_resp.json()["url"]
-        qs = parse_qs(urlparse(auth_url).query)
-        state = qs.get("state", [None])[0]
-        assert state
-
-        # Mock Google's token exchange response.
-        mock_token_resp = MagicMock()
-        mock_token_resp.ok = True
-        mock_token_resp.json.return_value = {
-            # Avoid real token patterns (secret scanner will flag them).
-            "access_token": "test_access_token_value",
-            "refresh_token": "test_refresh_token_value",
-            "expires_in": 3600,
-            "scope": "https://www.googleapis.com/auth/calendar",
-            "token_type": "Bearer",
-        }
-
-        with patch("qzwhatnext.api.app.requests.post", return_value=mock_token_resp):
-            cb = test_client.get("/auth/google/calendar/callback", params={"code": "test-code", "state": state})
-            assert cb.status_code == 200
-            assert "Google Calendar connected" in cb.text or "already connected" in cb.text
 
         # Mock credential refresh and Calendar client behavior to avoid network.
         with patch("qzwhatnext.api.app.GoogleCredentials.refresh", return_value=None), patch(
@@ -416,29 +479,9 @@ class TestGoogleCalendarSync:
         """Second /sync-calendar run should not recreate already-synced events."""
         r = test_client.post("/tasks", json={"title": "Calendar Task 3", "category": "work", "estimated_duration_min": 30})
         assert r.status_code == 201
-        build = test_client.post("/schedule")
+        _connect_google_calendar(test_client)
+        build = _post_schedule_with_calendar(test_client, events=[])
         assert build.status_code == 200
-
-        auth_url_resp = test_client.get("/auth/google/calendar/auth-url")
-        assert auth_url_resp.status_code == 200
-        auth_url = auth_url_resp.json()["url"]
-        qs = parse_qs(urlparse(auth_url).query)
-        state = qs.get("state", [None])[0]
-        assert state
-
-        mock_token_resp = MagicMock()
-        mock_token_resp.ok = True
-        mock_token_resp.json.return_value = {
-            "access_token": "test_access_token_value",
-            "refresh_token": "test_refresh_token_value",
-            "expires_in": 3600,
-            "scope": "https://www.googleapis.com/auth/calendar",
-            "token_type": "Bearer",
-        }
-
-        with patch("qzwhatnext.api.app.requests.post", return_value=mock_token_resp):
-            cb = test_client.get("/auth/google/calendar/callback", params={"code": "test-code", "state": state})
-            assert cb.status_code == 200
 
         # First run creates.
         with patch("qzwhatnext.api.app.GoogleCredentials.refresh", return_value=None), patch(
@@ -483,10 +526,11 @@ class TestGoogleCalendarSync:
 
     def test_calendar_edit_imports_and_locks_block(self, test_client):
         """If a managed calendar event time changes, sync imports it and freezes the block."""
-        # Create a task and build schedule so blocks exist.
+        # Create a task, connect calendar, and build schedule so blocks exist.
         r = test_client.post("/tasks", json={"title": "Calendar Task 4", "category": "work", "estimated_duration_min": 30})
         assert r.status_code == 201
-        build = test_client.post("/schedule")
+        _connect_google_calendar(test_client)
+        build = _post_schedule_with_calendar(test_client, events=[])
         assert build.status_code == 200
         blocks = build.json()["scheduled_blocks"]
         assert blocks
@@ -498,23 +542,6 @@ class TestGoogleCalendarSync:
         # Use the overridden db via dependency directly in app tests: call repo on test fixture's session.
         # We can fetch the session through the dependency override by requesting schedule again and using its state;
         # simplest here: call unlock endpoint later to verify lock state.
-
-        # OAuth connect
-        auth_url_resp = test_client.get("/auth/google/calendar/auth-url")
-        qs = parse_qs(urlparse(auth_url_resp.json()["url"]).query)
-        state = qs.get("state", [None])[0]
-        mock_token_resp = MagicMock()
-        mock_token_resp.ok = True
-        mock_token_resp.json.return_value = {
-            "access_token": "test_access_token_value",
-            "refresh_token": "test_refresh_token_value",
-            "expires_in": 3600,
-            "scope": "https://www.googleapis.com/auth/calendar",
-            "token_type": "Bearer",
-        }
-        with patch("qzwhatnext.api.app.requests.post", return_value=mock_token_resp):
-            cb = test_client.get("/auth/google/calendar/callback", params={"code": "test-code", "state": state})
-            assert cb.status_code == 200
 
         # First sync creates and stores metadata.
         with patch("qzwhatnext.api.app.GoogleCredentials.refresh", return_value=None), patch(
@@ -556,7 +583,8 @@ class TestGoogleCalendarSync:
         """Lock/unlock endpoints should toggle ScheduledBlock.locked."""
         r = test_client.post("/tasks", json={"title": "Lock Toggle Task", "category": "work", "estimated_duration_min": 30})
         assert r.status_code == 201
-        build = test_client.post("/schedule")
+        _connect_google_calendar(test_client)
+        build = _post_schedule_with_calendar(test_client, events=[])
         assert build.status_code == 200
         block_id = build.json()["scheduled_blocks"][0]["id"]
 
@@ -570,33 +598,12 @@ class TestGoogleCalendarSync:
 
     def test_sync_calendar_invalid_grant_clears_token_and_forces_reconnect(self, test_client):
         """If Google refresh fails with invalid_grant, the stored calendar token is cleared."""
-        # Create a task and build schedule so blocks exist.
+        # Create a task, connect calendar, and build schedule so blocks exist.
         r = test_client.post("/tasks", json={"title": "Calendar Task invalid_grant", "category": "work", "estimated_duration_min": 30})
         assert r.status_code == 201
-        build = test_client.post("/schedule")
+        _connect_google_calendar(test_client)
+        build = _post_schedule_with_calendar(test_client, events=[])
         assert build.status_code == 200
-
-        # Connect calendar (store refresh token).
-        auth_url_resp = test_client.get("/auth/google/calendar/auth-url")
-        assert auth_url_resp.status_code == 200
-        auth_url = auth_url_resp.json()["url"]
-        qs = parse_qs(urlparse(auth_url).query)
-        state = qs.get("state", [None])[0]
-        assert state
-
-        mock_token_resp = MagicMock()
-        mock_token_resp.ok = True
-        mock_token_resp.json.return_value = {
-            "access_token": "test_access_token_value",
-            "refresh_token": "test_refresh_token_value",
-            "expires_in": 3600,
-            "scope": "https://www.googleapis.com/auth/calendar",
-            "token_type": "Bearer",
-        }
-
-        with patch("qzwhatnext.api.app.requests.post", return_value=mock_token_resp):
-            cb = test_client.get("/auth/google/calendar/callback", params={"code": "test-code", "state": state})
-            assert cb.status_code == 200
 
         # First sync: refresh fails with invalid_grant and should clear stored token row.
         with patch(
@@ -614,34 +621,14 @@ class TestGoogleCalendarSync:
 
     def test_schedule_rebuild_does_not_duplicate_calendar_events(self, test_client):
         """Rebuilding schedule should reuse prior block IDs so sync updates events instead of duplicating."""
-        # Create a task and build schedule so blocks exist.
+        # Create a task, connect calendar, and build schedule so blocks exist.
         r = test_client.post("/tasks", json={"title": "Calendar Task rebuild", "category": "work", "estimated_duration_min": 30})
         assert r.status_code == 201
-        build1 = test_client.post("/schedule")
+        _connect_google_calendar(test_client)
+        build1 = _post_schedule_with_calendar(test_client, events=[])
         assert build1.status_code == 200
         block1 = build1.json()["scheduled_blocks"][0]
         block1_id = block1["id"]
-
-        # Connect calendar.
-        auth_url_resp = test_client.get("/auth/google/calendar/auth-url")
-        assert auth_url_resp.status_code == 200
-        auth_url = auth_url_resp.json()["url"]
-        qs = parse_qs(urlparse(auth_url).query)
-        state = qs.get("state", [None])[0]
-        assert state
-
-        mock_token_resp = MagicMock()
-        mock_token_resp.ok = True
-        mock_token_resp.json.return_value = {
-            "access_token": "test_access_token_value",
-            "refresh_token": "test_refresh_token_value",
-            "expires_in": 3600,
-            "scope": "https://www.googleapis.com/auth/calendar",
-            "token_type": "Bearer",
-        }
-        with patch("qzwhatnext.api.app.requests.post", return_value=mock_token_resp):
-            cb = test_client.get("/auth/google/calendar/callback", params={"code": "test-code", "state": state})
-            assert cb.status_code == 200
 
         # First sync creates event and persists mapping.
         with patch("qzwhatnext.api.app.GoogleCredentials.refresh", return_value=None), patch(
@@ -659,7 +646,7 @@ class TestGoogleCalendarSync:
             assert create_mock.call_count >= 1
 
         # Rebuild schedule (should reuse same block id for this task).
-        build2 = test_client.post("/schedule")
+        build2 = _post_schedule_with_calendar(test_client, events=[])
         assert build2.status_code == 200
         block2 = [b for b in build2.json()["scheduled_blocks"] if b["entity_id"] == block1["entity_id"]][0]
         assert block2["id"] == block1_id
@@ -694,29 +681,9 @@ class TestGoogleCalendarSync:
         """If the user deletes a managed event, sync should recreate it."""
         r = test_client.post("/tasks", json={"title": "Calendar Task deleted", "category": "work", "estimated_duration_min": 30})
         assert r.status_code == 201
-        build = test_client.post("/schedule")
+        _connect_google_calendar(test_client)
+        build = _post_schedule_with_calendar(test_client, events=[])
         assert build.status_code == 200
-
-        # Connect calendar.
-        auth_url_resp = test_client.get("/auth/google/calendar/auth-url")
-        assert auth_url_resp.status_code == 200
-        auth_url = auth_url_resp.json()["url"]
-        qs = parse_qs(urlparse(auth_url).query)
-        state = qs.get("state", [None])[0]
-        assert state
-
-        mock_token_resp = MagicMock()
-        mock_token_resp.ok = True
-        mock_token_resp.json.return_value = {
-            "access_token": "test_access_token_value",
-            "refresh_token": "test_refresh_token_value",
-            "expires_in": 3600,
-            "scope": "https://www.googleapis.com/auth/calendar",
-            "token_type": "Bearer",
-        }
-        with patch("qzwhatnext.api.app.requests.post", return_value=mock_token_resp):
-            cb = test_client.get("/auth/google/calendar/callback", params={"code": "test-code", "state": state})
-            assert cb.status_code == 200
 
         # First sync creates the event.
         with patch("qzwhatnext.api.app.GoogleCredentials.refresh", return_value=None), patch(

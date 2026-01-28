@@ -174,12 +174,14 @@ Set these in your deployment:
 1. Go to [Google Cloud Console](https://console.cloud.google.com/)
 2. Enable Google Calendar API
 3. Ensure your OAuth consent screen is configured
-4. In your OAuth client (Web application), add an **Authorized redirect URI**:
+4. In your OAuth client (Web application):
+   - Add your app origin to **Authorized JavaScript origins** (e.g., `http://localhost:8000`, `https://YOUR_DOMAIN`)
+   - Add an **Authorized redirect URI** for the manual reconnect flow:
    - `https://YOUR_DOMAIN/auth/google/calendar/callback`
 5. Set these secrets in your deployment:
    - `GOOGLE_OAUTH_CLIENT_SECRET`
    - `TOKEN_ENCRYPTION_KEY`
-6. In the app UI, click **Sync to Google Calendar** → you’ll be prompted to connect your Google account.
+6. With these configured, the initial Google sign-in can grant Calendar access (one-time consent). If a user revokes access or tokens expire, the UI may prompt to reconnect.
 
 ## Security Notes
 

@@ -76,7 +76,8 @@ Visit `http://localhost:8000` in your browser.
   - `GET /schedule` - View the current schedule
 - **Sync to Google Calendar**:
   - `POST /sync-calendar` - Write scheduled events to Google Calendar
-  - If not connected yet, the UI will prompt you to connect your Google Calendar via OAuth
+  - If `GOOGLE_OAUTH_CLIENT_SECRET` + `TOKEN_ENCRYPTION_KEY` are configured, the initial Google sign-in will also grant Calendar access (one-time consent).
+  - Otherwise, the UI will prompt you to connect Google Calendar the first time you sync.
 
 **Note:** 
 - Tasks are persisted in SQLite database (`qzwhatnext.db`)

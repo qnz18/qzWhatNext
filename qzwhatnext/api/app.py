@@ -3,8 +3,8 @@
 import logging
 import os
 import uuid
-from datetime import datetime, timedelta, timezone
-from typing import List, Optional, Dict
+from datetime import datetime, timedelta, timezone, date
+from typing import List, Optional, Dict, Tuple
 from urllib.parse import urlencode, urlparse, urlunparse
 
 import jwt
@@ -21,7 +21,11 @@ from sqlalchemy.orm import Session
 from qzwhatnext.models.task import Task, TaskStatus, TaskCategory, EnergyIntensity
 from qzwhatnext.models.scheduled_block import ScheduledBlock
 from qzwhatnext.models.task_factory import create_task_base, determine_ai_exclusion
-from qzwhatnext.api.auth_models import GoogleOAuthCallbackRequest, AuthResponse
+from qzwhatnext.api.auth_models import (
+    GoogleOAuthCallbackRequest,
+    GoogleOAuthCodeExchangeRequest,
+    AuthResponse,
+)
 from qzwhatnext.integrations.google_calendar import (
     GoogleCalendarClient,
     PRIVATE_KEY_BLOCK_ID,
@@ -78,6 +82,79 @@ def _public_url_for(request: Request, endpoint_name: str) -> str:
         parsed = urlparse(url)
         url = urlunparse(parsed._replace(scheme=forwarded_proto))
     return url
+
+
+def _parse_rfc3339(dt_str: Optional[str]) -> Optional[datetime]:
+    """Parse RFC3339 datetime string to timezone-aware datetime when possible."""
+    if not dt_str:
+        return None
+    try:
+        return datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+def _to_utc_naive(dt: Optional[datetime]) -> Optional[datetime]:
+    """Convert datetime to UTC-naive (or pass through naive datetimes)."""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt
+    return dt.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _to_rfc3339_z(dt: datetime) -> str:
+    """Convert datetime to RFC3339 string with trailing Z."""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    else:
+        dt = dt.astimezone(timezone.utc)
+    return dt.isoformat().replace("+00:00", "Z")
+
+
+def _event_private(event: dict) -> dict:
+    return ((event.get("extendedProperties") or {}).get("private") or {})
+
+
+def _event_time_window_utc_naive(event: dict) -> Optional[Tuple[datetime, datetime]]:
+    """Extract an event's [start, end) window as UTC-naive datetimes.
+
+    Only uses start/end time fields; ignores summary/description/attendees.
+    Handles both timed events (dateTime) and all-day events (date).
+    """
+    if not isinstance(event, dict):
+        return None
+    if (event.get("status") or "").lower() == "cancelled":
+        return None
+
+    start = event.get("start") or {}
+    end = event.get("end") or {}
+
+    start_str = start.get("dateTime")
+    end_str = end.get("dateTime")
+    if start_str and end_str:
+        s = _to_utc_naive(_parse_rfc3339(start_str))
+        e = _to_utc_naive(_parse_rfc3339(end_str))
+        if s is None or e is None or e <= s:
+            return None
+        return (s, e)
+
+    # All-day events: Google represents end date as exclusive.
+    start_date = start.get("date")
+    end_date = end.get("date")
+    if start_date and end_date:
+        try:
+            sd = date.fromisoformat(start_date)
+            ed = date.fromisoformat(end_date)
+        except Exception:
+            return None
+        s = datetime(sd.year, sd.month, sd.day)
+        e = datetime(ed.year, ed.month, ed.day)
+        if e <= s:
+            return None
+        return (s, e)
+
+    return None
 
 
 def _encode_calendar_oauth_state(user_id: str) -> str:
@@ -643,6 +720,49 @@ async def root():
                 return await res.json();
             }
 
+            async function handleGoogleCodeResponse(response) {
+                try {
+                    const preLoginVersion = authVersion;
+                    setAuthStatus('Signing in...');
+                    const code = response && response.code;
+                    if (!code) {
+                        const err = response && response.error ? String(response.error) : 'No OAuth code received.';
+                        throw new Error(err);
+                    }
+
+                    const res = await fetch('/auth/google/code-exchange', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            // CSRF signal required by our backend for popup code model.
+                            'X-Requested-With': 'XmlHttpRequest'
+                        },
+                        body: JSON.stringify({ code })
+                    });
+
+                    if (!res.ok) {
+                        const errBody = await res.json().catch(() => ({}));
+                        throw new Error(errBody.detail || 'Failed to authenticate');
+                    }
+
+                    const data = await res.json();
+                    if (isStale(preLoginVersion)) return;
+                    // Invalidate any in-flight requests tied to the old auth state.
+                    bumpAuthVersion();
+                    setAccessToken(data.access_token);
+                    const version = authVersion;
+                    setAuthStatus('Signed in.');
+                    await refreshMe(version);
+                    if (isStale(version)) return;
+                    await viewTasks(version);
+                    try { await viewSchedule(version); } catch (e) { /* ignore */ }
+                    await loadShortcutTokenStatus(version);
+                } catch (e) {
+                    console.error('Auth error:', e);
+                    setAuthStatus('Auth error: ' + (e && e.message ? e.message : String(e)));
+                }
+            }
+
             async function handleGoogleCredentialResponse(response) {
                 try {
                     const preLoginVersion = authVersion;
@@ -688,28 +808,69 @@ async def root():
                     setAuthStatus('Missing GOOGLE_OAUTH_CLIENT_ID on the server. Set it in your .env and restart.');
                     return;
                 }
-                if (!window.google || !google.accounts || !google.accounts.id) {
+                if (!window.google || !google.accounts) {
                     setAuthStatus('Google sign-in library not loaded yet. Refresh in a second.');
                     return;
                 }
                 setJwtUiState();
-                google.accounts.id.initialize({
-                    client_id: clientId,
-                    callback: handleGoogleCredentialResponse,
-                    // Don't auto-select account - force user to choose
-                    auto_select: false,
-                    // Cancel One Tap prompt to force button click for account selection
-                    cancel_on_tap_outside: true
-                });
-                google.accounts.id.renderButton(
-                    document.getElementById("gsi-button"),
-                    { 
-                        theme: "outline", 
-                        size: "large",
-                        text: "signin_with",
-                        shape: "rectangular"
+                const unified = !!(cfg && cfg.google_unified_oauth_enabled);
+                const container = document.getElementById("gsi-button");
+                if (unified) {
+                    if (!google.accounts.oauth2 || !google.accounts.oauth2.initCodeClient) {
+                        setAuthStatus('Google OAuth library not loaded yet. Refresh in a second.');
+                        return;
                     }
-                );
+                    // Request unified consent: identity + Calendar in one flow.
+                    const codeClient = google.accounts.oauth2.initCodeClient({
+                        client_id: clientId,
+                        scope: 'openid email profile https://www.googleapis.com/auth/calendar',
+                        ux_mode: 'popup',
+                        callback: handleGoogleCodeResponse,
+                        // Force account chooser to avoid accidental wrong-account grants.
+                        select_account: true,
+                        error_callback: (err) => {
+                            const t = err && err.type ? String(err.type) : 'unknown';
+                            setAuthStatus('Auth error: ' + t);
+                        }
+                    });
+
+                    // Render our own button (GIS code client does not provide a styled button helper).
+                    if (container) {
+                        container.innerHTML = '';
+                        const btn = document.createElement('button');
+                        btn.id = 'google-auth-button';
+                        btn.textContent = 'Sign in with Google';
+                        btn.style.padding = '10px 16px';
+                        btn.style.border = '1px solid #dadce0';
+                        btn.style.borderRadius = '4px';
+                        btn.style.background = '#fff';
+                        btn.style.cursor = 'pointer';
+                        btn.onclick = () => codeClient.requestCode();
+                        container.appendChild(btn);
+                    }
+                } else {
+                    if (!google.accounts.id || !google.accounts.id.initialize) {
+                        setAuthStatus('Google sign-in library not loaded yet. Refresh in a second.');
+                        return;
+                    }
+                    google.accounts.id.initialize({
+                        client_id: clientId,
+                        callback: handleGoogleCredentialResponse,
+                        // Don't auto-select account - force user to choose
+                        auto_select: false,
+                        // Cancel One Tap prompt to force button click for account selection
+                        cancel_on_tap_outside: true
+                    });
+                    google.accounts.id.renderButton(
+                        container,
+                        { 
+                            theme: "outline", 
+                            size: "large",
+                            text: "signin_with",
+                            shape: "rectangular"
+                        }
+                    );
+                }
                 // Don't auto-prompt - users must click the button to sign in.
                 // Also: don't claim "Signed in" unless the backend validates the session.
                 if (getAccessToken()) {
@@ -726,18 +887,6 @@ async def root():
                 setAccessToken(null);
                 setAuthStatus('Signed out.');
                 setUserInfo('');
-                try {
-                    if (window.google && google.accounts && google.accounts.id) {
-                        // Prevent Google from silently reusing the last account selection.
-                        google.accounts.id.disableAutoSelect();
-                        // Best-effort revoke; even if it fails, local logout still stands.
-                        if (currentUserEmail) {
-                            google.accounts.id.revoke(currentUserEmail, () => {});
-                        }
-                    }
-                } catch (e) {
-                    // ignore
-                }
                 currentUserEmail = null;
                 document.getElementById('tasks').innerHTML = '<p>Signed out. Sign in to load tasks.</p>';
                 const tasksUpdated = document.getElementById('tasksUpdated');
@@ -1255,7 +1404,17 @@ async def favicon():
 @app.get("/auth/config")
 async def auth_config():
     """Return public auth configuration needed by the browser UI."""
-    return {"google_oauth_client_id": os.getenv("GOOGLE_OAUTH_CLIENT_ID", "")}
+    client_id = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "").strip()
+    # Unified consent requires the server to be able to exchange auth codes and store refresh tokens.
+    unified_enabled = bool(
+        client_id
+        and os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "").strip()
+        and os.getenv("TOKEN_ENCRYPTION_KEY", "").strip()
+    )
+    return {
+        "google_oauth_client_id": client_id,
+        "google_unified_oauth_enabled": unified_enabled,
+    }
 
 
 # Authentication endpoints
@@ -1319,6 +1478,161 @@ async def google_oauth_callback(
         token_type="bearer",
         user=user.model_dump()
     )
+
+
+@app.post("/auth/google/code-exchange", response_model=AuthResponse)
+async def google_oauth_code_exchange(
+    request: Request,
+    payload: GoogleOAuthCodeExchangeRequest,
+    db: Session = Depends(get_db),
+):
+    """Exchange a Google OAuth authorization code for tokens, then login the user.
+
+    This endpoint supports a unified web flow where the browser obtains an OAuth
+    authorization code (GIS code client) for both identity scopes and Calendar,
+    and the backend exchanges it for:
+    - id_token (identity, verified)
+    - refresh_token (stored encrypted for Calendar sync)
+    - access_token / expiry (optional, stored encrypted)
+    """
+    client_id = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "").strip()
+    client_secret = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "").strip()
+    if not client_id or not client_secret:
+        raise HTTPException(status_code=500, detail="Google OAuth client is not configured")
+
+    # Basic CSRF mitigation for popup code model:
+    # the browser must set X-Requested-With and same-origin requests will include Origin.
+    xrw = (request.headers.get("x-requested-with") or "").strip()
+    if xrw.lower() != "xmlhttprequest":
+        raise HTTPException(status_code=400, detail="Missing CSRF header")
+
+    origin = (request.headers.get("origin") or "").strip()
+    if origin:
+        redirect_uri = origin.rstrip("/")
+    else:
+        # Test clients or unusual environments may omit Origin; fall back to request base URL.
+        redirect_uri = str(request.base_url).rstrip("/")
+
+    token_url = "https://oauth2.googleapis.com/token"
+    token_resp = requests.post(
+        token_url,
+        data={
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "code": payload.code,
+            "grant_type": "authorization_code",
+            "redirect_uri": redirect_uri,
+        },
+        timeout=15,
+    )
+
+    try:
+        token_data = token_resp.json()
+    except Exception:
+        raise HTTPException(status_code=502, detail="Failed to parse Google token response")
+
+    if not token_resp.ok:
+        err = token_data.get("error_description") or token_data.get("error") or "Google token exchange failed"
+        raise HTTPException(status_code=502, detail=str(err))
+
+    id_token_str = token_data.get("id_token")
+    if not id_token_str:
+        raise HTTPException(status_code=502, detail="Google did not return an id_token for login")
+
+    # Verify identity
+    user_info = verify_google_token(str(id_token_str))
+    if not user_info:
+        raise HTTPException(status_code=401, detail="Invalid Google token")
+    if not user_info.get("email"):
+        raise HTTPException(status_code=400, detail="Email is required")
+
+    # Create/update user in DB
+    user_repo = UserRepository(db)
+    now = datetime.utcnow()
+    user = User(
+        id=user_info["id"],
+        email=user_info["email"],
+        name=user_info.get("name"),
+        created_at=now,
+        updated_at=now,
+    )
+    try:
+        user = user_repo.create_or_update(user)
+    except Exception as e:
+        logger.error(f"Failed to create/update user: {type(e).__name__}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to create/update user")
+
+    # Legacy DB compatibility: claim unowned tasks for this user so they remain visible after login.
+    try:
+        db.execute(
+            text("UPDATE tasks SET user_id = :uid WHERE user_id IS NULL OR user_id = ''"),
+            {"uid": user.id},
+        )
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.warning(f"Failed to claim legacy tasks for user {user.id}: {type(e).__name__}: {str(e)}")
+
+    # Store Calendar refresh token (encrypted) for unified consent.
+    refresh_token = token_data.get("refresh_token")
+    access_token = token_data.get("access_token")
+    expires_in = token_data.get("expires_in")
+    scope_str = token_data.get("scope") or ""
+    scopes = [s for s in str(scope_str).split() if s] or ["https://www.googleapis.com/auth/calendar"]
+
+    expiry = None
+    if isinstance(expires_in, (int, float)):
+        expiry = datetime.utcnow() + timedelta(seconds=int(expires_in))
+
+    token_repo = GoogleOAuthTokenRepository(db)
+    if not refresh_token:
+        # Google may omit refresh_token on subsequent grants.
+        existing = token_repo.get_google_calendar(user.id)
+        if not existing:
+            raise HTTPException(
+                status_code=400,
+                detail="Google did not return a refresh token. Please revoke app access in your Google Account and try again.",
+            )
+        # Keep existing refresh token only if it is still valid (not revoked).
+        try:
+            existing_refresh = decrypt_secret(existing.refresh_token_encrypted)
+            test_creds = GoogleCredentials(
+                token=None,
+                refresh_token=existing_refresh,
+                token_uri="https://oauth2.googleapis.com/token",
+                client_id=client_id,
+                client_secret=client_secret,
+                scopes=scopes,
+            )
+            test_creds.refresh(GoogleAuthRequest())
+        except Exception:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Google did not return a refresh token, and your existing Calendar authorization is no longer valid. "
+                    "Please revoke qzWhatNext access in your Google Account (Security → Third-party access) and try again."
+                ),
+            )
+        # Re-upsert to update scopes/access token/expiry and re-encrypt deterministically under current key.
+        token_repo.upsert_google_calendar(
+            user_id=user.id,
+            refresh_token=str(existing_refresh),
+            scopes=scopes,
+            access_token=str(access_token) if access_token else None,
+            expiry=expiry,
+        )
+    else:
+        token_repo.upsert_google_calendar(
+            user_id=user.id,
+            refresh_token=str(refresh_token),
+            scopes=scopes,
+            access_token=str(access_token) if access_token else None,
+            expiry=expiry,
+        )
+
+    # Issue qzWhatNext JWT
+    token = create_access_token(user.id)
+    return AuthResponse(access_token=token, token_type="bearer", user=user.model_dump())
 
 
 @app.get("/auth/me")
@@ -2012,6 +2326,56 @@ async def build_schedule(
         raise HTTPException(status_code=400, detail="No tasks available. Create tasks first.")
     
     try:
+        # Scheduling requires Calendar connection so we can respect real availability.
+        token_repo = GoogleOAuthTokenRepository(db)
+        token_row = token_repo.get_google_calendar(current_user.id)
+        if not token_row:
+            raise HTTPException(
+                status_code=400,
+                detail="Google Calendar not connected. Connect via /auth/google/calendar/auth-url (or click Sync in the UI).",
+            )
+
+        client_id = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "").strip()
+        client_secret = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "").strip()
+        if not client_id or not client_secret:
+            raise HTTPException(status_code=500, detail="Google OAuth client is not configured")
+
+        refresh_token = decrypt_secret(token_row.refresh_token_encrypted)
+        scopes = token_row.scopes or ["https://www.googleapis.com/auth/calendar"]
+
+        creds = GoogleCredentials(
+            token=None,
+            refresh_token=refresh_token,
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=client_id,
+            client_secret=client_secret,
+            scopes=scopes,
+        )
+        try:
+            creds.refresh(GoogleAuthRequest())
+        except Exception as e:
+            logger.warning(f"Google Calendar refresh failed for user {current_user.id}: {type(e).__name__}: {str(e)}")
+            # If the refresh token is revoked/expired, clear it so the next schedule build forces reconnect.
+            msg = str(e).lower()
+            if "invalid_grant" in msg or "expired" in msg or "revoked" in msg:
+                try:
+                    token_repo.delete_google_calendar(current_user.id)
+                except Exception:
+                    pass
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Google Calendar authorization expired or was revoked. "
+                    "Reconnect via /auth/google/calendar/auth-url (or click Sync in the UI)."
+                ),
+            )
+
+        calendar_client = GoogleCalendarClient(credentials=creds, calendar_id="primary")
+
+        # Schedule window (must match both calendar query and scheduler inputs).
+        schedule_start = datetime.utcnow()
+        schedule_end = schedule_start + timedelta(days=7)
+
         # Preserve locked blocks from prior schedule (frozen placements).
         existing_blocks = schedule_repo.get_all(current_user.id)
         locked_blocks = [b for b in existing_blocks if b.locked]
@@ -2027,7 +2391,27 @@ async def build_schedule(
             unlocked_by_task[tid].sort(key=lambda b: b.start_time)
 
         # Compute reserved intervals (locked time is off-limits for new blocks).
-        reserved_intervals = [(b.start_time, b.end_time) for b in locked_blocks]
+        reserved_intervals: List[Tuple[datetime, datetime]] = [(b.start_time, b.end_time) for b in locked_blocks]
+
+        # Add non-managed Calendar event windows as reserved time (privacy: time window only).
+        try:
+            events = calendar_client.list_events_in_range(
+                time_min_rfc3339=_to_rfc3339_z(schedule_start),
+                time_max_rfc3339=_to_rfc3339_z(schedule_end),
+                # Minimize data: only the fields needed to identify managed events and time windows.
+                fields="items(start,end,status,extendedProperties(private)),nextPageToken",
+            )
+            for ev in events:
+                priv = _event_private(ev)
+                if priv.get(PRIVATE_KEY_MANAGED) == "1":
+                    continue
+                interval = _event_time_window_utc_naive(ev)
+                if interval:
+                    reserved_intervals.append(interval)
+        except Exception:
+            # Best-effort: if availability fetch fails, do not schedule blindly.
+            # Return a clear error so the user can retry.
+            raise HTTPException(status_code=400, detail="Failed to read calendar availability. Try again.")
 
         # Reduce per-task remaining duration by time already covered by locked blocks.
         locked_minutes_by_task: Dict[str, int] = {}
@@ -2048,7 +2432,12 @@ async def build_schedule(
                 continue
             schedulable_tasks.append(t.model_copy(update={"estimated_duration_min": remaining}))
 
-        schedule_result = schedule_tasks(schedulable_tasks, reserved_intervals=reserved_intervals)
+        schedule_result = schedule_tasks(
+            schedulable_tasks,
+            start_time=schedule_start,
+            end_time=schedule_end,
+            reserved_intervals=reserved_intervals,
+        )
 
         # Reuse unlocked block IDs + calendar sync metadata where possible (per task, by block order).
         adjusted_blocks: List[ScheduledBlock] = []
@@ -2091,6 +2480,8 @@ async def build_schedule(
             start_time=schedule_result.start_time,
             task_titles=task_titles
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to build schedule: {type(e).__name__}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to build schedule: {str(e)}")
@@ -2187,24 +2578,6 @@ async def sync_calendar(
         tasks_dict = {task.id: task for task in tasks}
         current_block_ids = {b.id for b in blocks}
         
-        def _parse_rfc3339(dt_str: Optional[str]) -> Optional[datetime]:
-            if not dt_str:
-                return None
-            try:
-                return datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
-            except Exception:
-                return None
-
-        def _to_utc_naive(dt: Optional[datetime]) -> Optional[datetime]:
-            if dt is None:
-                return None
-            if dt.tzinfo is None:
-                return dt
-            return dt.astimezone(timezone.utc).replace(tzinfo=None)
-
-        def _event_private(event: dict) -> dict:
-            return ((event.get("extendedProperties") or {}).get("private") or {})
-
         def _is_managed_event_for_block(event: dict, block_id: str) -> bool:
             priv = _event_private(event)
             return priv.get(PRIVATE_KEY_MANAGED) == "1" and priv.get(PRIVATE_KEY_BLOCK_ID) == block_id
@@ -2242,13 +2615,6 @@ async def sync_calendar(
 
                 window_start = min(starts) - timedelta(days=2)
                 window_end = max(ends) + timedelta(days=2)
-
-                def _to_rfc3339_z(dt: datetime) -> str:
-                    if dt.tzinfo is None:
-                        dt = dt.replace(tzinfo=timezone.utc)
-                    else:
-                        dt = dt.astimezone(timezone.utc)
-                    return dt.isoformat().replace("+00:00", "Z")
 
                 for ev in calendar_client.list_events_in_range(
                     time_min_rfc3339=_to_rfc3339_z(window_start),

@@ -91,7 +91,8 @@ echo -e "\n✅ Verifying .gitignore configuration..."
 if [ -f .gitignore ]; then
     REQUIRED_PATTERNS=(".env" "credentials.json" "token.json" "sheets_token.json" "client_secret*.json")
     for pattern in "${REQUIRED_PATTERNS[@]}"; do
-        if ! grep -qE "^${pattern}$|^.*${pattern}" .gitignore 2>/dev/null; then
+        # Use fixed-string match so wildcard patterns (e.g. client_secret*.json) are handled correctly.
+        if ! grep -qF "$pattern" .gitignore 2>/dev/null; then
             echo -e "${YELLOW}⚠ Warning: '$pattern' pattern not found in .gitignore${NC}"
         fi
     done

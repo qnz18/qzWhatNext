@@ -1,7 +1,7 @@
 # qzWhatNext – Scoring & Scheduling Engine Spec (v1)
 
 **Version:** 0.1.1  
-**Last Updated:** 2026-01-17  
+**Last Updated:** 2026-01-28  
 **Status:** Buildable MVP Spec  
 **Scope:** Deterministic engine with AI augmentation hooks (non-authoritative)
 
@@ -360,6 +360,14 @@ The scheduler:
 2. finds the earliest feasible placement
 3. splits tasks into 30-minute minimum chunks if needed
 4. marks tasks overflow if no valid placement exists
+
+### 13.1 Availability Source (MVP)
+
+For MVP, “available time” is computed deterministically by excluding:
+- **Locked scheduled blocks** (previously scheduled and user-frozen placements)
+- **Non-qzWhatNext-managed Google Calendar events**, using **only their (start, end) time windows**
+
+qzWhatNext-managed events (those it created and can prove ownership of) are not treated as external blockers because they correspond to `ScheduledBlock`s already governed by the engine.
 
 ---
 

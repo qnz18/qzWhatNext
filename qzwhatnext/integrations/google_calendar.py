@@ -198,6 +198,7 @@ class GoogleCalendarClient:
         *,
         time_min_rfc3339: str,
         time_max_rfc3339: str,
+        fields: Optional[str] = None,
         max_pages: int = 10,
     ) -> List[dict]:
         """List events in a time range (singleEvents) with pagination.
@@ -205,6 +206,7 @@ class GoogleCalendarClient:
         Args:
             time_min_rfc3339: RFC3339 timeMin (e.g. 2026-01-01T00:00:00Z)
             time_max_rfc3339: RFC3339 timeMax
+            fields: Optional partial response fields selector (minimize data returned).
             max_pages: safety cap on pagination
         """
         items: List[dict] = []
@@ -214,19 +216,18 @@ class GoogleCalendarClient:
             pages += 1
             if pages > max_pages:
                 break
-            resp = (
-                self.service.events()
-                .list(
-                    calendarId=self.calendar_id,
-                    timeMin=time_min_rfc3339,
-                    timeMax=time_max_rfc3339,
-                    singleEvents=True,
-                    orderBy="startTime",
-                    pageToken=page_token,
-                    maxResults=2500,
-                )
-                .execute()
+            req = self.service.events().list(
+                calendarId=self.calendar_id,
+                timeMin=time_min_rfc3339,
+                timeMax=time_max_rfc3339,
+                singleEvents=True,
+                orderBy="startTime",
+                pageToken=page_token,
+                maxResults=2500,
             )
+            if fields:
+                req = req.fields(fields)
+            resp = req.execute()
             items.extend(resp.get("items") or [])
             page_token = resp.get("nextPageToken")
             if not page_token:

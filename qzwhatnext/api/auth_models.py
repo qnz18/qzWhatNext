@@ -8,6 +8,12 @@ class GoogleOAuthCallbackRequest(BaseModel):
     id_token: str = Field(..., description="Google ID token from OAuth flow")
 
 
+class GoogleOAuthCodeExchangeRequest(BaseModel):
+    """Request model for Google OAuth authorization-code exchange."""
+
+    code: str = Field(..., description="Google OAuth authorization code from GIS code client")
+
+
 class AuthResponse(BaseModel):
     """Response model for authentication."""
     access_token: str
