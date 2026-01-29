@@ -216,7 +216,7 @@ class GoogleCalendarClient:
             pages += 1
             if pages > max_pages:
                 break
-            req = self.service.events().list(
+            kwargs = dict(
                 calendarId=self.calendar_id,
                 timeMin=time_min_rfc3339,
                 timeMax=time_max_rfc3339,
@@ -226,8 +226,9 @@ class GoogleCalendarClient:
                 maxResults=2500,
             )
             if fields:
-                req = req.fields(fields)
-            resp = req.execute()
+                # google-api-python-client supports partial responses via the `fields` query parameter.
+                kwargs["fields"] = fields
+            resp = self.service.events().list(**kwargs).execute()
             items.extend(resp.get("items") or [])
             page_token = resp.get("nextPageToken")
             if not page_token:
