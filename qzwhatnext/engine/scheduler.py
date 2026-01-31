@@ -98,45 +98,81 @@ def schedule_tasks(
         # Skip if manually scheduled (system doesn't move these)
         if task.manually_scheduled:
             continue
+
+        # If task has a flexibility window, it must be scheduled entirely within it.
+        window_start: Optional[datetime] = None
+        window_end: Optional[datetime] = None
+        if task.flexibility_window:
+            try:
+                window_start, window_end = task.flexibility_window
+            except Exception:
+                window_start, window_end = None, None
+            if window_start is not None and window_end is not None and window_end <= window_start:
+                # Invalid window: treat as unschedulable in MVP (overflow).
+                result.overflow_tasks.append(task)
+                continue
         
         # Calculate how many 30-minute blocks we need
         duration_minutes = task.estimated_duration_min
         blocks_needed = max(1, (duration_minutes + SCHEDULING_GRANULARITY_MINUTES - 1) // SCHEDULING_GRANULARITY_MINUTES)
         total_duration = blocks_needed * SCHEDULING_GRANULARITY_MINUTES
-        
-        # Check if we have enough time before end_time
-        if current_time + timedelta(minutes=total_duration) > end_time:
+
+        # Establish earliest candidate start for this task (respecting flexibility window).
+        task_start = current_time
+        if window_start is not None:
+            task_start = max(task_start, window_start)
+        if window_end is not None and task_start >= window_end:
             result.overflow_tasks.append(task)
             continue
-        
-        # Create scheduled blocks for this task
+
+        # Fast coarse check (does not account for reserved jumps, but avoids work when impossible).
+        if task_start + timedelta(minutes=total_duration) > end_time:
+            result.overflow_tasks.append(task)
+            continue
+        if window_end is not None and task_start + timedelta(minutes=total_duration) > window_end:
+            result.overflow_tasks.append(task)
+            continue
+
+        # Create scheduled blocks for this task (all-or-nothing within window).
         remaining_duration = duration_minutes
-        task_start = current_time
-        
+        candidate_start = task_start
+        new_blocks: List[ScheduledBlock] = []
+        failed = False
+
         while remaining_duration > 0:
             block_duration = min(remaining_duration, SCHEDULING_GRANULARITY_MINUTES)
-            task_start = next_available_time(task_start, block_duration)
-            block_end = task_start + timedelta(minutes=block_duration)
-            
-            block = ScheduledBlock(
-                id=str(uuid.uuid4()),
-                user_id=task.user_id,
-                entity_type=EntityType.TASK,
-                entity_id=task.id,
-                start_time=task_start,
-                end_time=block_end,
-                scheduled_by=ScheduledBy.SYSTEM,
-                locked=False,
+            candidate_start = next_available_time(candidate_start, block_duration)
+            block_end = candidate_start + timedelta(minutes=block_duration)
+
+            if block_end > end_time:
+                failed = True
+                break
+            if window_end is not None and block_end > window_end:
+                failed = True
+                break
+
+            new_blocks.append(
+                ScheduledBlock(
+                    id=str(uuid.uuid4()),
+                    user_id=task.user_id,
+                    entity_type=EntityType.TASK,
+                    entity_id=task.id,
+                    start_time=candidate_start,
+                    end_time=block_end,
+                    scheduled_by=ScheduledBy.SYSTEM,
+                    locked=False,
+                )
             )
-            
-            result.scheduled_blocks.append(block)
-            
-            # Move to next block
-            task_start = block_end
+
+            candidate_start = block_end
             remaining_duration -= block_duration
-        
-        # Move current time forward
-        current_time = task_start
+
+        if failed:
+            result.overflow_tasks.append(task)
+            continue
+
+        result.scheduled_blocks.extend(new_blocks)
+        current_time = candidate_start
     
     return result
 

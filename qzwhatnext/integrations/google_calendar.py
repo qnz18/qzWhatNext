@@ -22,6 +22,8 @@ SCOPES = ['https://www.googleapis.com/auth/calendar']
 PRIVATE_KEY_TASK_ID = "qzwhatnext_task_id"
 PRIVATE_KEY_BLOCK_ID = "qzwhatnext_block_id"
 PRIVATE_KEY_MANAGED = "qzwhatnext_managed"
+# Private key for recurring time blocks (NOT marked managed).
+PRIVATE_KEY_TIME_BLOCK_ID = "qzwhatnext_time_block_id"
 
 
 class GoogleCalendarClient:
@@ -234,6 +236,47 @@ class GoogleCalendarClient:
             if not page_token:
                 break
         return items
+
+    def get_calendar_timezone(self) -> str:
+        """Return the calendar's timezone id (e.g., 'America/Los_Angeles')."""
+        try:
+            cal = self.service.calendars().get(calendarId=self.calendar_id).execute()
+            tz = (cal or {}).get("timeZone")
+            return tz or "UTC"
+        except Exception:
+            return "UTC"
+
+    def create_recurring_time_block_event(
+        self,
+        *,
+        title: str,
+        description: Optional[str],
+        start_dt_iso: str,
+        end_dt_iso: str,
+        time_zone: str,
+        rrule: str,
+        time_block_id: str,
+    ) -> dict:
+        """Create a recurring event that represents a user time block.
+
+        Important: this event is intentionally NOT marked qzWhatNext-managed, so it is treated as reserved time.
+        """
+        event_body = {
+            "summary": title,
+            "description": description or "",
+            "start": {"dateTime": start_dt_iso, "timeZone": time_zone},
+            "end": {"dateTime": end_dt_iso, "timeZone": time_zone},
+            "recurrence": [f"RRULE:{rrule}"],
+            "extendedProperties": {
+                "private": {
+                    PRIVATE_KEY_TIME_BLOCK_ID: time_block_id,
+                }
+            },
+        }
+        try:
+            return self.service.events().insert(calendarId=self.calendar_id, body=event_body).execute()
+        except HttpError as error:
+            raise Exception(f"Failed to create recurring time block event: {error}") from error
     
     def create_events_from_blocks(
         self,

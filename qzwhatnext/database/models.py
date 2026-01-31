@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Optional, List
 import uuid
-from sqlalchemy import Column, String, Integer, Float, Boolean, DateTime, JSON, ForeignKey
+from sqlalchemy import Column, String, Integer, Float, Boolean, DateTime, JSON, ForeignKey, UniqueConstraint
 
 from typing import Union, TypeVar, Type
 from qzwhatnext.database.database import Base
@@ -50,6 +50,11 @@ class TaskDB(Base):
     """Database model for Task."""
     
     __tablename__ = "tasks"
+    __table_args__ = (
+        # Prevent duplicate generation of the same recurring occurrence for a series.
+        # Note: NULL values do not participate (non-recurring tasks are unaffected).
+        UniqueConstraint("user_id", "recurrence_series_id", "recurrence_occurrence_start", name="uq_task_recurrence_occurrence"),
+    )
     
     # Primary key
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -93,6 +98,10 @@ class TaskDB(Base):
     manual_priority_locked = Column(Boolean, nullable=False, default=False)
     user_locked = Column(Boolean, nullable=False, default=False)
     manually_scheduled = Column(Boolean, nullable=False, default=False)
+
+    # Recurrence linkage (optional)
+    recurrence_series_id = Column(String, ForeignKey("recurring_task_series.id", ondelete="SET NULL"), nullable=True, index=True)
+    recurrence_occurrence_start = Column(DateTime, nullable=True, index=True)
     
     def to_pydantic(self):
         """Convert database model to Pydantic model."""
@@ -142,6 +151,8 @@ class TaskDB(Base):
             manual_priority_locked=self.manual_priority_locked,
             user_locked=self.user_locked,
             manually_scheduled=self.manually_scheduled,
+            recurrence_series_id=getattr(self, "recurrence_series_id", None),
+            recurrence_occurrence_start=getattr(self, "recurrence_occurrence_start", None),
         )
     
     @classmethod
@@ -181,7 +192,50 @@ class TaskDB(Base):
             manual_priority_locked=task.manual_priority_locked,
             user_locked=task.user_locked,
             manually_scheduled=task.manually_scheduled,
+            recurrence_series_id=getattr(task, "recurrence_series_id", None),
+            recurrence_occurrence_start=getattr(task, "recurrence_occurrence_start", None),
         )
+
+
+class RecurringTaskSeriesDB(Base):
+    """Database model for a recurring task series (template + recurrence preset)."""
+
+    __tablename__ = "recurring_task_series"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    title_template = Column(String, nullable=False)
+    notes_template = Column(String, nullable=True)
+
+    estimated_duration_min_default = Column(Integer, nullable=False, default=30)
+    category_default = Column(String, nullable=False, default=TaskCategory.UNKNOWN.value)
+
+    recurrence_preset = Column(JSON, nullable=False)
+    ai_excluded = Column(Boolean, nullable=False, default=False)
+
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    deleted_at = Column(DateTime, nullable=True, index=True)
+
+
+class RecurringTimeBlockDB(Base):
+    """Database model for a recurring calendar/time block managed by qzWhatNext."""
+
+    __tablename__ = "recurring_time_blocks"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    title = Column(String, nullable=False)
+    recurrence_preset = Column(JSON, nullable=False)
+
+    # Google Calendar event id for the recurring series "master" event.
+    calendar_event_id = Column(String, nullable=True, index=True)
+
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    deleted_at = Column(DateTime, nullable=True, index=True)
 
 
 class UserDB(Base):

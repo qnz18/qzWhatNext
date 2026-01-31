@@ -71,6 +71,26 @@ class TestScheduleTasks:
         # Normal task should be scheduled
         normal_blocks = [b for b in result.scheduled_blocks if b.entity_id == normal_task.id]
         assert len(normal_blocks) >= 1
+
+    def test_respects_flexibility_window(self, sample_task_base):
+        """Tasks with a flexibility_window must be scheduled within it."""
+        task = Task(
+            **{
+                **sample_task_base,
+                "estimated_duration_min": 30,
+                "flexibility_window": (
+                    datetime(2024, 1, 1, 13, 0, 0),
+                    datetime(2024, 1, 1, 14, 0, 0),
+                ),
+            }
+        )
+        start_time = datetime(2024, 1, 1, 10, 0, 0)
+        end_time = datetime(2024, 1, 1, 18, 0, 0)
+
+        result = schedule_tasks([task], start_time=start_time, end_time=end_time)
+        assert result.scheduled_blocks
+        assert result.scheduled_blocks[0].start_time >= task.flexibility_window[0]
+        assert result.scheduled_blocks[-1].end_time <= task.flexibility_window[1]
     
     def test_handles_overflow_when_insufficient_time(self, sample_task_base):
         """Test that tasks are marked as overflow when insufficient time."""

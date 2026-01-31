@@ -64,6 +64,8 @@ A Task has the following fields:
 - manual_priority_locked: boolean
 - user_locked: boolean
 - manually_scheduled: boolean
+- recurrence_series_id: string | null (if generated from a recurring series)
+- recurrence_occurrence_start: datetime | null (canonical occurrence anchor for dedupe/exceptions)
 
 **Task Ownership and Persistence:**
 - Tasks are owned by qzWhatNext after import or creation
@@ -91,6 +93,41 @@ A Task has the following fields:
 **Note:** `energy_intensity` is included in the Task model but is not used for scheduling decisions in MVP. Energy budgeting is deferred to future releases.
 
 ---
+
+### 2.1.1 Recurring Task Series (MVP)
+
+A RecurringTaskSeries is a persisted template that generates Task instances within the active scheduling horizon:
+
+- id: string
+- user_id: string
+- title_template: string
+- notes_template: string | null
+- estimated_duration_min_default: integer
+- category_default: string
+- recurrence_preset: object (simple preset schema; internal canonical representation)
+- ai_excluded: boolean
+- created_at: datetime
+- updated_at: datetime
+- deleted_at: datetime | null
+
+Series materialization is deterministic and idempotent for a given horizon window: tasks are de-duped using `(user_id, recurrence_series_id, recurrence_occurrence_start)`.
+
+---
+
+### 2.1.2 Recurring Time Block (MVP)
+
+A RecurringTimeBlock is a persisted definition that creates/updates a recurring Google Calendar event which blocks time:
+
+- id: string
+- user_id: string
+- title: string
+- recurrence_preset: object
+- calendar_event_id: string | null (Google Calendar event id for the recurring series master)
+- created_at: datetime
+- updated_at: datetime
+- deleted_at: datetime | null
+
+Recurring time blocks are treated as **user-blocked time** for scheduling (reserved intervals).
 
 ### 2.2 Scheduled Block
 
@@ -178,7 +215,7 @@ This rule must be enforced **before any AI call**.
 On each rebuild trigger, the engine executes:
 
 0. Resolve user context (all pipeline steps are executed per user)
-1. Ingest and normalize tasks
+1. Ingest and normalize tasks (including materializing recurring series into concrete Task instances for the active horizon)
 2. Enforce AI exclusion rules
 3. Infer attributes (AI hooks + defaults)
 4. Validate hard constraints
@@ -256,6 +293,7 @@ The schedule must **never violate**:
 - dependency order
 - deadlines
 - locked scheduled blocks
+- task `flexibility_window` when present (task must be fully scheduled within it)
 
 If a task cannot be scheduled:
 - mark as overflow / unlikely to complete

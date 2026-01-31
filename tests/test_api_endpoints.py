@@ -306,6 +306,56 @@ class TestAddSmartEndpoint:
         assert task["notes"] == ".Private note"
 
 
+class TestCaptureEndpoint:
+    """Test POST /capture endpoint (single-input recurring capture)."""
+
+    def test_capture_creates_recurring_task_series_and_instances(self, test_client):
+        r = test_client.post("/capture", json={"instruction": "take my vitamins every morning"})
+        assert r.status_code == 200
+        payload = r.json()
+        assert payload["action"] == "created"
+        assert payload["entity_kind"] == "task_series"
+        assert payload["entity_id"]
+        assert payload["tasks_created"] >= 1
+
+        # Instances should exist as tasks.
+        tasks = test_client.get("/tasks").json()["tasks"]
+        assert any("vitamins" in (t["title"] or "").lower() for t in tasks)
+
+    def test_capture_creates_and_updates_recurring_time_block(self, test_client):
+        _connect_google_calendar(test_client)
+
+        with patch("qzwhatnext.api.app.GoogleCredentials.refresh", return_value=None), patch(
+            "qzwhatnext.integrations.google_calendar.build",
+            return_value=MagicMock(),
+        ), patch(
+            "qzwhatnext.api.app.GoogleCalendarClient.get_calendar_timezone",
+            return_value="UTC",
+        ), patch(
+            "qzwhatnext.api.app.GoogleCalendarClient.create_recurring_time_block_event",
+            return_value={"id": "evt_tb_1"},
+        ), patch(
+            "qzwhatnext.api.app.GoogleCalendarClient.patch_event",
+            return_value={"id": "evt_tb_1"},
+        ):
+            create = test_client.post("/capture", json={"instruction": "kids practice tues at 4:30"})
+            assert create.status_code == 200
+            created = create.json()
+            assert created["entity_kind"] == "time_block"
+            assert created["calendar_event_id"] == "evt_tb_1"
+            block_id = created["entity_id"]
+
+            upd = test_client.post(
+                "/capture",
+                json={"entity_id": block_id, "instruction": "kids practice tues at 5pm"},
+            )
+            assert upd.status_code == 200
+            updated = upd.json()
+            assert updated["action"] == "updated"
+            assert updated["entity_kind"] == "time_block"
+            assert updated["entity_id"] == block_id
+
+
 class TestScheduleEndpoints:
     """Test schedule-related endpoints."""
     

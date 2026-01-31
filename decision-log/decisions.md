@@ -739,6 +739,27 @@ For a calendar-first product, asking users to “log in” and then separately �
 
 ---
 
+## D-040 — Single-Input Recurring Capture (MVP)
+
+**Decision:**  
+qzWhatNext supports creating and updating repeating items via a single input endpoint (`POST /capture`). The system deterministically chooses whether the instruction becomes:
+- a **Recurring Task Series** (which materializes Task instances into the active scheduling horizon), or
+- a **Recurring Time Block** (a recurring Google Calendar event that blocks time).
+
+Recurring time blocks are created in the user’s **Google Calendar timezone** and are treated as **user-blocked time** (reserved intervals) during schedule builds.
+
+**Rationale:**  
+Users should not need to decide “task vs time block” or remember different endpoints. A single capture flow reduces friction while preserving deterministic behavior and clear ownership boundaries in Calendar.
+
+**Implications:**  
+- A new `POST /capture` endpoint exists for create/update of recurring capture entities.
+- Recurring task series generate concrete Task instances, de-duped by `(user_id, recurrence_series_id, recurrence_occurrence_start)`.
+- Recurring time blocks are created as recurring Google Calendar events and are **not** marked as qzWhatNext-managed schedule events (so they behave like reserved time).
+- AI parsing may be used only when the instruction is not AI-excluded; AI-excluded instructions must never be sent to AI.
+**Status:** Draft (MVP)
+
+---
+
 ## Canonical Rule
 
 If a future behavior conflicts with a decision in this log:

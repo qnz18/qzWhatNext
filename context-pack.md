@@ -241,6 +241,7 @@ Included:
 - Multi-user authentication and user-scoped data access
 - Google sign-in → JWT for API calls
 - Long-lived automation token for iOS Shortcuts (`X-Shortcut-Token`, revocable)
+- Single-input capture for recurring tasks/time blocks (plain English → system determines best representation)
 - Automatic task identification
 - Continuous stack-ranking
 - Auto-scheduling (using base task durations)

@@ -61,6 +61,14 @@ class Task(BaseModel):
     manual_priority_locked: bool = Field(False, description="Whether priority is manually locked")
     user_locked: bool = Field(False, description="Whether task is user-locked")
     manually_scheduled: bool = Field(False, description="Whether task is manually scheduled")
+
+    # Recurrence linkage (optional)
+    recurrence_series_id: Optional[str] = Field(
+        None, description="If generated from a recurring series, the series id"
+    )
+    recurrence_occurrence_start: Optional[datetime] = Field(
+        None, description="If generated from a recurring series, the canonical occurrence start timestamp"
+    )
     
     class Config:
         """Pydantic configuration."""

@@ -31,6 +31,7 @@ from qzwhatnext.integrations.google_calendar import (
     PRIVATE_KEY_BLOCK_ID,
     PRIVATE_KEY_MANAGED,
     PRIVATE_KEY_TASK_ID,
+    PRIVATE_KEY_TIME_BLOCK_ID,
 )
 from qzwhatnext.integrations.google_sheets import GoogleSheetsClient
 from qzwhatnext.engine.ranking import stack_rank
@@ -38,6 +39,8 @@ from qzwhatnext.engine.scheduler import schedule_tasks, SchedulingResult
 from qzwhatnext.engine.inference import infer_category, generate_title, estimate_duration
 from qzwhatnext.database.database import get_db, init_db
 from qzwhatnext.database.repository import TaskRepository
+from qzwhatnext.database.recurring_task_series_repository import RecurringTaskSeriesRepository
+from qzwhatnext.database.recurring_time_block_repository import RecurringTimeBlockRepository
 from qzwhatnext.database.google_oauth_token_repository import (
     GoogleOAuthTokenRepository,
     decrypt_secret,
@@ -50,6 +53,9 @@ from qzwhatnext.auth.google_oauth import verify_google_token
 from qzwhatnext.auth.dependencies import get_current_user
 from qzwhatnext.auth.shortcut_tokens import generate_shortcut_token, hash_shortcut_token
 from qzwhatnext.models.user import User
+from qzwhatnext.recurrence.interpret import interpret_capture_instruction
+from qzwhatnext.recurrence.materialize import materialize_recurring_tasks
+from qzwhatnext.recurrence.rrule_export import preset_to_rrule
 
 # Initialize logger
 logger = logging.getLogger(__name__)
@@ -325,6 +331,30 @@ class ImportSheetsResponse(BaseModel):
     duplicates_detected: int = 0
 
 
+class CaptureRequest(BaseModel):
+    """Single-input capture request.
+
+    The backend auto-determines whether this becomes:
+    - a recurring task series (materialized into Task instances), or
+    - a recurring calendar/time block (Google Calendar recurring event).
+
+    If entity_id is provided, the request updates that existing entity.
+    """
+
+    instruction: str = Field(..., min_length=1)
+    entity_id: Optional[str] = Field(None, description="Optional id of an existing recurring series/time block to update")
+
+
+class CaptureResponse(BaseModel):
+    """Single-input capture response."""
+
+    action: str = Field(..., description="created or updated")
+    entity_kind: str = Field(..., description="task_series or time_block")
+    entity_id: str
+    tasks_created: int = 0
+    calendar_event_id: Optional[str] = None
+
+
 class ScheduleResponse(BaseModel):
     """Response for schedule view."""
     scheduled_blocks: List[ScheduledBlock]
@@ -438,6 +468,23 @@ async def root():
         <div class="section">
             <h2>Schedule</h2>
             <div id="schedule"></div>
+        </div>
+
+        <div class="section">
+            <h2>Capture (single input)</h2>
+            <p class="muted">Type what you need. qzWhatNext will decide whether to create a recurring task series or a recurring time block.</p>
+            <form id="captureForm" onsubmit="captureInstruction(event)">
+                <div class="form-group">
+                    <label for="captureInstruction">Instruction *</label>
+                    <textarea id="captureInstruction" rows="2" placeholder="e.g., take my vitamins every morning&#10;e.g., kids practice tues at 4:30&#10;e.g., bed time every day 11pm to 7am" required></textarea>
+                </div>
+                <div class="form-group">
+                    <label for="captureEntityId">Update existing (optional entity_id)</label>
+                    <input type="text" id="captureEntityId" placeholder="Paste an entity_id returned by a previous capture to update it">
+                </div>
+                <button type="submit">Capture</button>
+                <div id="captureResult" class="muted" style="margin-top: 8px;"></div>
+            </form>
         </div>
         
         <div class="section">
@@ -948,6 +995,61 @@ async def root():
                 } catch (e) {
                     if (!isStale(version)) {
                         el.textContent = 'Error: ' + (e && e.message ? e.message : String(e));
+                    }
+                }
+            }
+
+            async function captureInstruction(event) {
+                event.preventDefault();
+                const version = authVersion;
+                const status = document.getElementById('status');
+                const result = document.getElementById('captureResult');
+                const instructionEl = document.getElementById('captureInstruction');
+                const entityIdEl = document.getElementById('captureEntityId');
+
+                const instruction = (instructionEl && instructionEl.value) ? instructionEl.value.trim() : '';
+                const entityId = (entityIdEl && entityIdEl.value) ? entityIdEl.value.trim() : '';
+
+                if (!instruction) {
+                    if (result) result.textContent = 'Instruction is required.';
+                    return;
+                }
+
+                if (status) status.innerHTML = 'Capturing...';
+                if (result) result.textContent = '';
+
+                const payload = entityId ? { instruction, entity_id: entityId } : { instruction };
+
+                try {
+                    const response = await apiFetch('/capture', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    }, version);
+
+                    const data = await response.json();
+                    if (isStale(version)) return;
+                    if (!response.ok) {
+                        throw new Error((data && data.detail) ? String(data.detail) : 'Failed to capture');
+                    }
+
+                    const msgParts = [
+                        `${data.action}: ${data.entity_kind}`,
+                        `entity_id=${data.entity_id}`,
+                    ];
+                    if (data.tasks_created) msgParts.push(`tasks_created=${data.tasks_created}`);
+                    if (data.calendar_event_id) msgParts.push(`calendar_event_id=${data.calendar_event_id}`);
+
+                    if (result) result.textContent = msgParts.join(' · ');
+                    if (status) status.innerHTML = 'Capture ok.';
+
+                    // Refresh task list when we may have created task instances.
+                    await viewTasks(version);
+                } catch (e) {
+                    if (!isStale(version)) {
+                        const msg = e && e.message ? e.message : String(e);
+                        if (result) result.textContent = 'Error: ' + msg;
+                        if (status) status.innerHTML = 'Error: ' + msg;
                     }
                 }
             }
@@ -1905,6 +2007,203 @@ async def revoke_shortcut_token(
     return Response(status_code=204)
 
 
+# Single-input capture endpoint (recurring tasks + time blocks)
+@app.post("/capture", response_model=CaptureResponse)
+async def capture(
+    request: CaptureRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Capture a natural language instruction and create/update the right entity.
+
+    Phase 1: create-only.
+    Phase 2: updates supported when entity_id is provided.
+    """
+    now = datetime.utcnow()
+    instruction = request.instruction or ""
+
+    # AI parsing is allowed only when not AI-excluded by prefix.
+    ai_allowed = not instruction.strip().startswith(".")
+    parsed = interpret_capture_instruction(instruction, ai_allowed=ai_allowed, now=now)
+    preset_json = parsed.preset.model_dump(mode="json")
+
+    # Helper: get calendar client (used for time blocks)
+    def _calendar_client_or_400() -> GoogleCalendarClient:
+        token_repo = GoogleOAuthTokenRepository(db)
+        token_row = token_repo.get_google_calendar(current_user.id)
+        if not token_row:
+            raise HTTPException(
+                status_code=400,
+                detail="Google Calendar not connected. Connect via /auth/google/calendar/auth-url (or click Sync in the UI).",
+            )
+        client_id = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "").strip()
+        client_secret = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "").strip()
+        if not client_id or not client_secret:
+            raise HTTPException(status_code=500, detail="Google OAuth client is not configured")
+
+        refresh_token = decrypt_secret(token_row.refresh_token_encrypted)
+        scopes = token_row.scopes or ["https://www.googleapis.com/auth/calendar"]
+        creds = GoogleCredentials(
+            token=None,
+            refresh_token=refresh_token,
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=client_id,
+            client_secret=client_secret,
+            scopes=scopes,
+        )
+        try:
+            creds.refresh(GoogleAuthRequest())
+        except Exception as e:
+            raise HTTPException(
+                status_code=400,
+                detail="Google Calendar authorization expired or was revoked. Reconnect via /auth/google/calendar/auth-url.",
+            )
+        return GoogleCalendarClient(credentials=creds, calendar_id="primary")
+
+    # Update flow (Phase 2)
+    if request.entity_id:
+        series_repo = RecurringTaskSeriesRepository(db)
+        time_block_repo = RecurringTimeBlockRepository(db)
+
+        series = series_repo.get(current_user.id, request.entity_id)
+        if series is not None:
+            if parsed.entity_kind != "task_series":
+                raise HTTPException(status_code=400, detail="Instruction does not describe a recurring task series")
+            updated = series_repo.update_from_instruction(
+                current_user.id,
+                request.entity_id,
+                title_template=parsed.title,
+                recurrence_preset=preset_json,
+            )
+            if updated is None:
+                raise HTTPException(status_code=404, detail="Recurring task series not found")
+            return CaptureResponse(action="updated", entity_kind="task_series", entity_id=updated.id)
+
+        tb = time_block_repo.get(current_user.id, request.entity_id)
+        if tb is not None:
+            if parsed.entity_kind != "time_block":
+                raise HTTPException(status_code=400, detail="Instruction does not describe a recurring time block")
+            calendar_client = _calendar_client_or_400()
+            tz = calendar_client.get_calendar_timezone()
+
+            if parsed.preset.time_start is None or parsed.preset.time_end is None:
+                raise HTTPException(status_code=400, detail="Time block requires start and end times")
+
+            start_date = parsed.preset.start_date or now.date()
+            start_dt = datetime.combine(start_date, parsed.preset.time_start)
+            end_dt = datetime.combine(start_date, parsed.preset.time_end)
+            if parsed.preset.time_end <= parsed.preset.time_start:
+                end_dt = end_dt + timedelta(days=1)
+
+            rrule = preset_to_rrule(parsed.preset)
+            desired = {
+                "summary": parsed.title,
+                "description": "",
+                "start": {"dateTime": start_dt.isoformat(), "timeZone": tz},
+                "end": {"dateTime": end_dt.isoformat(), "timeZone": tz},
+                "recurrence": [f"RRULE:{rrule}"],
+                "extendedProperties": {"private": {PRIVATE_KEY_TIME_BLOCK_ID: tb.id}},
+            }
+
+            event_id = tb.calendar_event_id
+            if event_id:
+                calendar_client.patch_event(event_id, desired)
+            else:
+                created = calendar_client.create_recurring_time_block_event(
+                    title=parsed.title,
+                    description="",
+                    start_dt_iso=start_dt.isoformat(),
+                    end_dt_iso=end_dt.isoformat(),
+                    time_zone=tz,
+                    rrule=rrule,
+                    time_block_id=tb.id,
+                )
+                event_id = created.get("id")
+
+            updated = time_block_repo.update_from_instruction(
+                current_user.id,
+                tb.id,
+                title=parsed.title,
+                recurrence_preset=preset_json,
+                calendar_event_id=event_id,
+            )
+            if updated is None:
+                raise HTTPException(status_code=404, detail="Recurring time block not found")
+            return CaptureResponse(
+                action="updated",
+                entity_kind="time_block",
+                entity_id=updated.id,
+                calendar_event_id=updated.calendar_event_id,
+            )
+
+        raise HTTPException(status_code=404, detail="Entity not found for update")
+
+    # Create flow (Phase 1)
+    if parsed.entity_kind == "task_series":
+        series_repo = RecurringTaskSeriesRepository(db)
+        created_series = series_repo.create(
+            user_id=current_user.id,
+            title_template=parsed.title,
+            notes_template=None,
+            estimated_duration_min_default=30,
+            category_default=TaskCategory.UNKNOWN.value,
+            recurrence_preset=preset_json,
+            ai_excluded=parsed.ai_excluded,
+        )
+        # Materialize into task instances inside the current scheduling horizon (7 days for now).
+        tasks_created = materialize_recurring_tasks(
+            db,
+            user_id=current_user.id,
+            window_start=now,
+            window_end=now + timedelta(days=7),
+        )
+        return CaptureResponse(
+            action="created",
+            entity_kind="task_series",
+            entity_id=created_series.id,
+            tasks_created=tasks_created,
+        )
+
+    # time_block
+    calendar_client = _calendar_client_or_400()
+    tz = calendar_client.get_calendar_timezone()
+    if parsed.preset.time_start is None or parsed.preset.time_end is None:
+        raise HTTPException(status_code=400, detail="Time block requires start and end times")
+
+    start_date = parsed.preset.start_date or now.date()
+    start_dt = datetime.combine(start_date, parsed.preset.time_start)
+    end_dt = datetime.combine(start_date, parsed.preset.time_end)
+    if parsed.preset.time_end <= parsed.preset.time_start:
+        end_dt = end_dt + timedelta(days=1)
+
+    time_block_repo = RecurringTimeBlockRepository(db)
+    block_id = str(uuid.uuid4())
+    rrule = preset_to_rrule(parsed.preset)
+    created_event = calendar_client.create_recurring_time_block_event(
+        title=parsed.title,
+        description="",
+        start_dt_iso=start_dt.isoformat(),
+        end_dt_iso=end_dt.isoformat(),
+        time_zone=tz,
+        rrule=rrule,
+        time_block_id=block_id,
+    )
+    event_id = created_event.get("id")
+    row = time_block_repo.create(
+        block_id=block_id,
+        user_id=current_user.id,
+        title=parsed.title,
+        recurrence_preset=preset_json,
+        calendar_event_id=event_id,
+    )
+    return CaptureResponse(
+        action="created",
+        entity_kind="time_block",
+        entity_id=row.id,
+        calendar_event_id=row.calendar_event_id,
+    )
+
+
 # Task CRUD endpoints
 @app.post("/tasks", response_model=TaskResponse, status_code=201)
 async def create_task(
@@ -2319,9 +2618,25 @@ async def build_schedule(
     """Build schedule from tasks in database."""
     task_repo = TaskRepository(db)
     schedule_repo = ScheduledBlockRepository(db)
-    
+
+    # Schedule window (must match both calendar query and scheduler inputs).
+    schedule_start = datetime.utcnow()
+    schedule_end = schedule_start + timedelta(days=7)
+
+    # Materialize recurring series into concrete task instances within the horizon.
+    # Best-effort: never block scheduling if a series cannot be materialized.
+    try:
+        materialize_recurring_tasks(
+            db,
+            user_id=current_user.id,
+            window_start=schedule_start,
+            window_end=schedule_end,
+        )
+    except Exception:
+        pass
+
     tasks = task_repo.get_open(current_user.id)
-    
+
     if not tasks:
         raise HTTPException(status_code=400, detail="No tasks available. Create tasks first.")
     
@@ -2373,8 +2688,7 @@ async def build_schedule(
         calendar_client = GoogleCalendarClient(credentials=creds, calendar_id="primary")
 
         # Schedule window (must match both calendar query and scheduler inputs).
-        schedule_start = datetime.utcnow()
-        schedule_end = schedule_start + timedelta(days=7)
+        # schedule_start / schedule_end were chosen above (also used for recurring task materialization).
 
         # Preserve locked blocks from prior schedule (frozen placements).
         existing_blocks = schedule_repo.get_all(current_user.id)
