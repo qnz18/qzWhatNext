@@ -162,6 +162,30 @@ def init_db():
     # create_all() will not add new columns to existing tables.
     if not _is_sqlite_url(DATABASE_URL):
         with engine.begin() as conn:
+            # Tasks: start_after / due_by (date-only constraints)
+            conn.execute(
+                text(
+                    "ALTER TABLE tasks "
+                    "ADD COLUMN IF NOT EXISTS start_after DATE"
+                )
+            )
+            conn.execute(
+                text(
+                    "ALTER TABLE tasks "
+                    "ADD COLUMN IF NOT EXISTS due_by DATE"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_tasks_start_after ON tasks (start_after)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_tasks_due_by ON tasks (due_by)"
+                )
+            )
+
             conn.execute(
                 text(
                     "ALTER TABLE scheduled_blocks "
