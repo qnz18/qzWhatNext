@@ -397,6 +397,8 @@ The scheduler:
 3. splits tasks into 30-minute minimum chunks if needed
 4. marks tasks overflow if no valid placement exists
 
+The scheduling horizon is configurable to **7, 14, or 30 days** (capped at 30).
+
 ### 13.1 Availability Source (MVP)
 
 For MVP, “available time” is computed deterministically by excluding:

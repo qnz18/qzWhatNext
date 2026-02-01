@@ -784,6 +784,21 @@ This provides a consistent, deterministic way to express “not before X” and 
 
 ---
 
+## D-042 — Adjustable Schedule Horizon (MVP)
+
+**Decision:**  
+The schedule build horizon is user-adjustable to one of: **7, 14, or 30 days** (capped at 30).
+
+**Rationale:**  
+7 days is often sufficient, but users sometimes need to plan farther out (e.g., coordinating family or social plans). A small set of fixed options preserves determinism and avoids overfitting UX.
+
+**Implications:**  
+- `POST /schedule` accepts `horizon_days` (7/14/30).
+- Calendar availability queries and scheduling use the same horizon window.
+**Status:** Draft (MVP)
+
+---
+
 ## Canonical Rule
 
 If a future behavior conflicts with a decision in this log:
