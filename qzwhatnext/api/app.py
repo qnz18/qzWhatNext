@@ -2027,6 +2027,24 @@ async def capture(
     parsed = interpret_capture_instruction(instruction, ai_allowed=ai_allowed, now=now)
     preset_json = parsed.preset.model_dump(mode="json")
 
+    def _next_date_for_weekly_start(d: date, by_weekday: list, *, max_days: int = 14) -> date:
+        """Pick the next date on/after d matching by_weekday (Weekday enums)."""
+        if not by_weekday:
+            return d
+        # Map Weekday enum values to Python weekday numbers.
+        # Weekday values are like 'mo','tu'...
+        wd_map = {"mo": 0, "tu": 1, "we": 2, "th": 3, "fr": 4, "sa": 5, "su": 6}
+        targets = {wd_map.get(getattr(w, "value", str(w)).lower()) for w in by_weekday}
+        targets.discard(None)
+        if not targets:
+            return d
+        cur = d
+        for _ in range(max_days):
+            if cur.weekday() in targets:
+                return cur
+            cur = cur + timedelta(days=1)
+        return d
+
     # Helper: get calendar client (used for time blocks)
     def _calendar_client_or_400() -> GoogleCalendarClient:
         token_repo = GoogleOAuthTokenRepository(db)
@@ -2090,6 +2108,8 @@ async def capture(
                 raise HTTPException(status_code=400, detail="Time block requires start and end times")
 
             start_date = parsed.preset.start_date or now.date()
+            if parsed.preset.frequency == "weekly" and parsed.preset.by_weekday:
+                start_date = _next_date_for_weekly_start(start_date, parsed.preset.by_weekday)
             start_dt = datetime.combine(start_date, parsed.preset.time_start)
             end_dt = datetime.combine(start_date, parsed.preset.time_end)
             if parsed.preset.time_end <= parsed.preset.time_start:
@@ -2171,6 +2191,8 @@ async def capture(
         raise HTTPException(status_code=400, detail="Time block requires start and end times")
 
     start_date = parsed.preset.start_date or now.date()
+    if parsed.preset.frequency == "weekly" and parsed.preset.by_weekday:
+        start_date = _next_date_for_weekly_start(start_date, parsed.preset.by_weekday)
     start_dt = datetime.combine(start_date, parsed.preset.time_start)
     end_dt = datetime.combine(start_date, parsed.preset.time_end)
     if parsed.preset.time_end <= parsed.preset.time_start:

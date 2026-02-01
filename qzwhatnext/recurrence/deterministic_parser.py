@@ -9,7 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime, time
 import re
-from typing import Optional, Tuple
+from datetime import timedelta
+from typing import List, Optional, Tuple
 
 from qzwhatnext.models.recurrence import (
     RecurrenceFrequency,
@@ -46,11 +47,20 @@ _WEEKDAY_ALIASES: list[tuple[re.Pattern, Weekday]] = [
 ]
 
 
-def _extract_weekday(text: str) -> Optional[Weekday]:
+def _extract_weekdays(text: str) -> List[Weekday]:
+    """Extract all mentioned weekdays (deduped, stable order)."""
+    out: List[Weekday] = []
     for pat, day in _WEEKDAY_ALIASES:
         if pat.search(text):
-            return day
-    return None
+            out.append(day)
+    # Deduplicate while preserving order
+    seen = set()
+    unique: List[Weekday] = []
+    for d in out:
+        if d not in seen:
+            seen.add(d)
+            unique.append(d)
+    return unique
 
 
 _TIME_RE = re.compile(
@@ -101,6 +111,20 @@ def _extract_time_range(text: str) -> Optional[Tuple[time, time]]:
         return None
 
 
+def _extract_duration_minutes(text: str) -> Optional[int]:
+    """Extract explicit duration like 'for 90 min' or 'for 1.5 hours'."""
+    t = (text or "").lower()
+    m = re.search(r"\bfor\s+(\d+(?:\.\d+)?)\s*(min|mins|minute|minutes)\b", t)
+    if m:
+        minutes = float(m.group(1))
+        return max(int(round(minutes)), 1)
+    h = re.search(r"\bfor\s+(\d+(?:\.\d+)?)\s*(hr|hrs|hour|hours)\b", t)
+    if h:
+        hours = float(h.group(1))
+        return max(int(round(hours * 60)), 1)
+    return None
+
+
 def _detect_time_of_day_window(text: str) -> Optional[TimeOfDayWindow]:
     t = text.lower()
     if "wake up" in t or "wakeup" in t or "wake-up" in t:
@@ -140,12 +164,13 @@ def parse_capture_instruction(text: str, *, now: Optional[datetime] = None) -> P
     title = normalized
 
     # Determine if this should be a time block.
-    weekday = _extract_weekday(normalized)
+    weekdays = _extract_weekdays(normalized)
     time_range = _extract_time_range(normalized)
+    duration_min = _extract_duration_minutes(normalized)
 
     # Detect patterns like "tues at 4:30"
     weekday_time: Optional[time] = None
-    if weekday is not None:
+    if weekdays:
         m = re.search(r"\bat\s+(.+)$", normalized, re.I)
         if m:
             try:
@@ -153,7 +178,7 @@ def parse_capture_instruction(text: str, *, now: Optional[datetime] = None) -> P
             except RecurrenceParseError:
                 weekday_time = None
 
-    is_time_block = bool(time_range) or (weekday is not None and weekday_time is not None)
+    is_time_block = bool(time_range) or (bool(weekdays) and weekday_time is not None)
     entity_kind = "time_block" if is_time_block else "task_series"
 
     # Frequency / interval
@@ -188,7 +213,7 @@ def parse_capture_instruction(text: str, *, now: Optional[datetime] = None) -> P
 
     # Default: if a weekday is specified, assume weekly; otherwise daily is too aggressive.
     if freq is None:
-        freq = RecurrenceFrequency.WEEKLY if weekday is not None else RecurrenceFrequency.DAILY
+        freq = RecurrenceFrequency.WEEKLY if weekdays else RecurrenceFrequency.DAILY
 
     # Support "3 times per week"
     count_per_period = None
@@ -206,7 +231,7 @@ def parse_capture_instruction(text: str, *, now: Optional[datetime] = None) -> P
     preset = RecurrencePreset(
         frequency=freq,
         interval=interval,
-        by_weekday=[weekday] if (freq == RecurrenceFrequency.WEEKLY and weekday is not None and count_per_period is None) else None,
+        by_weekday=weekdays if (freq == RecurrenceFrequency.WEEKLY and weekdays and count_per_period is None) else None,
         count_per_period=count_per_period,
         time_start=(time_range[0] if time_range else (weekday_time if weekday_time else None)) if entity_kind == "time_block" else None,
         time_end=(time_range[1] if time_range else None) if entity_kind == "time_block" else None,
@@ -222,13 +247,19 @@ def parse_capture_instruction(text: str, *, now: Optional[datetime] = None) -> P
         # If we only got a single time (weekday+time), require a duration or end time later.
         # MVP default: 60 minutes if end isn't provided.
         if preset.time_end is None:
-            preset = preset.model_copy(update={"time_end": time(hour=(preset.time_start.hour + 1) % 24, minute=preset.time_start.minute)})
+            if duration_min:
+                end_dt = datetime.combine(now.date(), preset.time_start) + timedelta(minutes=int(duration_min))
+                preset = preset.model_copy(update={"time_end": end_dt.time()})
+            else:
+                preset = preset.model_copy(
+                    update={"time_end": time(hour=(preset.time_start.hour + 1) % 24, minute=preset.time_start.minute)}
+                )
 
         # Weekly time block should include by_weekday if not daily range.
         if freq == RecurrenceFrequency.WEEKLY and (preset.by_weekday is None or not preset.by_weekday):
-            if weekday is None:
+            if not weekdays:
                 raise RecurrenceParseError("Weekly time block needs a weekday", missing=["by_weekday"])
-            preset = preset.model_copy(update={"by_weekday": [weekday]})
+            preset = preset.model_copy(update={"by_weekday": weekdays})
 
     return ParsedCapture(entity_kind=entity_kind, title=title, preset=preset, ai_excluded=ai_excluded)
 
