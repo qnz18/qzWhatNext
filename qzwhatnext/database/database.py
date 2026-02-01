@@ -162,6 +162,30 @@ def init_db():
     # create_all() will not add new columns to existing tables.
     if not _is_sqlite_url(DATABASE_URL):
         with engine.begin() as conn:
+            # Tasks: recurrence linkage (runtime relies on these columns existing)
+            conn.execute(
+                text(
+                    "ALTER TABLE tasks "
+                    "ADD COLUMN IF NOT EXISTS recurrence_series_id VARCHAR"
+                )
+            )
+            conn.execute(
+                text(
+                    "ALTER TABLE tasks "
+                    "ADD COLUMN IF NOT EXISTS recurrence_occurrence_start TIMESTAMP"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_tasks_recurrence_series_id ON tasks (recurrence_series_id)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_tasks_recurrence_occurrence_start ON tasks (recurrence_occurrence_start)"
+                )
+            )
+
             # Tasks: start_after / due_by (date-only constraints)
             conn.execute(
                 text(
