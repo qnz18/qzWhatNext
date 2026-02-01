@@ -483,7 +483,9 @@ async def root():
                     <input type="text" id="captureEntityId" placeholder="Paste an entity_id returned by a previous capture to update it">
                 </div>
                 <button type="submit">Capture</button>
-                <div id="captureResult" class="muted" style="margin-top: 8px;"></div>
+                <div id="captureResult" class="muted" style="margin-top: 8px; padding: 8px; border: 1px solid #ddd; border-radius: 5px; min-height: 18px;">
+                    Result will appear here.
+                </div>
             </form>
         </div>
         
@@ -1016,7 +1018,7 @@ async def root():
                 }
 
                 if (status) status.innerHTML = 'Capturing...';
-                if (result) result.textContent = '';
+                if (result) result.textContent = 'Capturing...';
 
                 const payload = entityId ? { instruction, entity_id: entityId } : { instruction };
 
@@ -1048,6 +1050,7 @@ async def root():
                 } catch (e) {
                     if (!isStale(version)) {
                         const msg = e && e.message ? e.message : String(e);
+                        console.error('Capture failed:', e);
                         if (result) result.textContent = 'Error: ' + msg;
                         if (status) status.innerHTML = 'Error: ' + msg;
                     }
