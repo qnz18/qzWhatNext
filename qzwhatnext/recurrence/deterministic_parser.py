@@ -171,12 +171,22 @@ def parse_capture_instruction(text: str, *, now: Optional[datetime] = None) -> P
     # Detect patterns like "tues at 4:30"
     weekday_time: Optional[time] = None
     if weekdays:
+        # Prefer explicit "at 4:30pm" form.
         m = re.search(r"\bat\s+(.+)$", normalized, re.I)
         if m:
             try:
                 weekday_time = _parse_time_token(m.group(1), context="weekday_time")
             except RecurrenceParseError:
                 weekday_time = None
+
+        # If user omits "at" (e.g., "tues and thurs 2:30pm"), fall back to the last time-like token.
+        if weekday_time is None and not time_range:
+            matches = list(_TIME_RE.finditer(normalized))
+            if matches:
+                try:
+                    weekday_time = _parse_time_token(matches[-1].group(0), context="weekday_time")
+                except RecurrenceParseError:
+                    weekday_time = None
 
     is_time_block = bool(time_range) or (bool(weekdays) and weekday_time is not None)
     entity_kind = "time_block" if is_time_block else "task_series"

@@ -355,6 +355,25 @@ class TestCaptureEndpoint:
             assert updated["entity_kind"] == "time_block"
             assert updated["entity_id"] == block_id
 
+    def test_capture_weekday_time_without_at_becomes_time_block(self, test_client):
+        _connect_google_calendar(test_client)
+
+        with patch("qzwhatnext.api.app.GoogleCredentials.refresh", return_value=None), patch(
+            "qzwhatnext.integrations.google_calendar.build",
+            return_value=MagicMock(),
+        ), patch(
+            "qzwhatnext.api.app.GoogleCalendarClient.get_calendar_timezone",
+            return_value="UTC",
+        ), patch(
+            "qzwhatnext.api.app.GoogleCalendarClient.create_recurring_time_block_event",
+            return_value={"id": "evt_tb_2"},
+        ):
+            r = test_client.post("/capture", json={"instruction": "bike ride tues and thurs 2:30pm"})
+            assert r.status_code == 200
+            payload = r.json()
+            assert payload["entity_kind"] == "time_block"
+            assert payload["calendar_event_id"] == "evt_tb_2"
+
 
 class TestScheduleEndpoints:
     """Test schedule-related endpoints."""
