@@ -58,7 +58,7 @@ jobs:
             --set-secrets "DATABASE_URL=${{ secrets.DATABASE_URL_SECRET_NAME }}:latest,JWT_SECRET_KEY=jwt-secret:latest,GOOGLE_OAUTH_CLIENT_SECRET=google-oauth-client-secret:latest,TOKEN_ENCRYPTION_KEY=token-encryption-key:latest" \
             --set-env-vars "GOOGLE_OAUTH_CLIENT_ID=${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}" \
             --command "python" \
-            --args "-m,qzwhatnext.database.migrate_runner" \
+            --args=-m,qzwhatnext.database.migrate_runner \
             --quiet
 
           gcloud run jobs execute "${SERVICE_NAME}-migrate" \
