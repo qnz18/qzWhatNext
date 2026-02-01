@@ -36,7 +36,7 @@ def _connect_google_calendar(test_client: TestClient) -> None:
         assert cb.status_code == 200
 
 
-def _post_schedule_with_calendar(test_client: TestClient, *, events: Optional[List[Dict]] = None):
+def _post_schedule_with_calendar(test_client: TestClient, *, events: Optional[List[Dict]] = None, horizon_days: int = 7):
     """POST /schedule with Calendar mocks (no network)."""
     with patch("qzwhatnext.api.app.GoogleCredentials.refresh", return_value=None), patch(
         "qzwhatnext.integrations.google_calendar.build",
@@ -45,7 +45,7 @@ def _post_schedule_with_calendar(test_client: TestClient, *, events: Optional[Li
         "qzwhatnext.api.app.GoogleCalendarClient.list_events_in_range",
         return_value=(events or []),
     ):
-        return test_client.post("/schedule")
+        return test_client.post("/schedule", params={"horizon_days": horizon_days})
 
 
 class TestTaskEndpoints:
@@ -475,6 +475,39 @@ class TestScheduleEndpoints:
         assert "overflow_tasks" in data
         assert "start_time" in data
         assert len(data["scheduled_blocks"]) > 0
+
+    def test_schedule_horizon_days_affects_calendar_query_window(self, test_client):
+        """Schedule horizon should widen the calendar availability query deterministically."""
+        # Create a task first so /schedule proceeds.
+        test_client.post("/tasks", json={"title": "Horizon Task", "category": "home", "estimated_duration_min": 30})
+        _connect_google_calendar(test_client)
+
+        fixed_now = datetime(2026, 1, 26, 12, 0, 0)
+
+        class _FixedDateTime(datetime):
+            @classmethod
+            def utcnow(cls):
+                return fixed_now
+
+        with patch("qzwhatnext.api.app.datetime", _FixedDateTime), patch(
+            "qzwhatnext.api.app.GoogleCredentials.refresh",
+            return_value=None,
+        ), patch(
+            "qzwhatnext.integrations.google_calendar.build",
+            return_value=MagicMock(),
+        ), patch(
+            "qzwhatnext.api.app.GoogleCalendarClient.get_calendar_timezone",
+            return_value="UTC",
+        ), patch(
+            "qzwhatnext.api.app.GoogleCalendarClient.list_events_in_range",
+            return_value=[],
+        ) as list_mock:
+            resp = test_client.post("/schedule", params={"horizon_days": 14})
+            assert resp.status_code == 200
+            assert list_mock.call_count == 1
+            kwargs = list_mock.call_args.kwargs
+            assert "time_max_rfc3339" in kwargs
+            assert kwargs["time_max_rfc3339"].startswith("2026-02-09")
 
     def test_build_schedule_requires_calendar_connected(self, test_client):
         """If tasks exist but Calendar is not connected, /schedule should 400."""

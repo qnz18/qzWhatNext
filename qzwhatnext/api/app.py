@@ -467,6 +467,16 @@ async def root():
 
         <div class="section">
             <h2>Actions</h2>
+            <div class="row">
+                <div class="wrap">
+                    <label for="scheduleHorizonDays">Schedule horizon</label>
+                    <select id="scheduleHorizonDays">
+                        <option value="7" selected>7 days</option>
+                        <option value="14">14 days</option>
+                        <option value="30">30 days</option>
+                    </select>
+                </div>
+            </div>
             <button onclick="buildSchedule()">Build Schedule</button>
             <button onclick="syncCalendar()">Sync to Google Calendar</button>
             <button onclick="viewSchedule()">View Schedule</button>
@@ -1150,7 +1160,10 @@ async def root():
                 const status = document.getElementById('status');
                 status.innerHTML = 'Building schedule...';
                 try {
-                    const response = await apiFetch('/schedule', { method: 'POST' }, version);
+                    const horizonEl = document.getElementById('scheduleHorizonDays');
+                    const horizon = horizonEl ? parseInt(horizonEl.value || '7', 10) : 7;
+                    const url = `/schedule?horizon_days=${encodeURIComponent(String(horizon))}`;
+                    const response = await apiFetch(url, { method: 'POST' }, version);
                     const data = await response.json();
                     if (isStale(version)) return;
                     status.innerHTML = `Schedule built: ${data.scheduled_blocks.length} blocks, ${data.overflow_tasks.length} overflow`;
@@ -2703,6 +2716,7 @@ async def import_from_sheets(
 
 @app.post("/schedule", response_model=ScheduleResponse)
 async def build_schedule(
+    horizon_days: int = Query(7, description="Schedule horizon in days (7/14/30; capped at 30)"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -2712,7 +2726,10 @@ async def build_schedule(
 
     # Schedule window (must match both calendar query and scheduler inputs).
     schedule_start = datetime.utcnow()
-    schedule_end = schedule_start + timedelta(days=7)
+    horizon_days = int(horizon_days or 7)
+    if horizon_days not in (7, 14, 30):
+        raise HTTPException(status_code=400, detail="horizon_days must be one of: 7, 14, 30")
+    schedule_end = schedule_start + timedelta(days=min(horizon_days, 30))
 
     # Materialize recurring series into concrete task instances within the horizon.
     # Best-effort: never block scheduling if a series cannot be materialized.
