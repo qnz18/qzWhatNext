@@ -473,7 +473,7 @@ async def root():
         <div class="section">
             <h2>Capture (single input)</h2>
             <p class="muted">Type what you need. qzWhatNext will decide whether to create a recurring task series or a recurring time block.</p>
-            <form id="captureForm" onsubmit="captureInstruction(event)">
+            <div id="captureForm">
                 <div class="form-group">
                     <label for="captureInstruction">Instruction *</label>
                     <textarea id="captureInstruction" rows="2" placeholder="e.g., take my vitamins every morning&#10;e.g., kids practice tues at 4:30&#10;e.g., bed time every day 11pm to 7am" required></textarea>
@@ -482,11 +482,11 @@ async def root():
                     <label for="captureEntityId">Update existing (optional entity_id)</label>
                     <input type="text" id="captureEntityId" placeholder="Paste an entity_id returned by a previous capture to update it">
                 </div>
-                <button type="submit">Capture</button>
+                <button type="button" onclick="captureInstruction()">Capture</button>
                 <div id="captureResult" class="muted" style="margin-top: 8px; padding: 8px; border: 1px solid #ddd; border-radius: 5px; min-height: 18px;">
                     Result will appear here.
                 </div>
-            </form>
+            </div>
         </div>
         
         <div class="section">
@@ -1001,8 +1001,7 @@ async def root():
                 }
             }
 
-            async function captureInstruction(event) {
-                event.preventDefault();
+            async function captureInstruction() {
                 const version = authVersion;
                 const status = document.getElementById('status');
                 const result = document.getElementById('captureResult');
