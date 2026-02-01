@@ -133,8 +133,19 @@ When you push to `main`:
 1. GitHub Actions workflow triggers
 2. Authenticates to GCP using service account key
 3. Builds + pushes Docker image to Artifact Registry
-4. Deploys to Cloud Run
-5. Service URL is displayed in workflow output
+4. Runs DB migrations via a Cloud Run Job (`qzwhatnext-migrate`)
+5. Deploys to Cloud Run
+6. Service URL is displayed in workflow output
+
+### Database Migrations
+
+Deploys run migrations using a dedicated Cloud Run Job so schema changes are applied before the new service revision starts serving traffic.
+
+You can run migrations manually (rare) with:
+
+```bash
+gcloud run jobs execute qzwhatnext-migrate --region us-central1 --wait
+```
 
 ### Manual Trigger
 
