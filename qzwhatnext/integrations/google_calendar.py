@@ -277,6 +277,30 @@ class GoogleCalendarClient:
             return self.service.events().insert(calendarId=self.calendar_id, body=event_body).execute()
         except HttpError as error:
             raise Exception(f"Failed to create recurring time block event: {error}") from error
+
+    def create_time_block_event(
+        self,
+        *,
+        title: str,
+        description: Optional[str],
+        start_dt_iso: str,
+        end_dt_iso: str,
+        time_zone: str,
+    ) -> dict:
+        """Create a one-off event that represents a user time block.
+
+        Important: this event is intentionally NOT marked qzWhatNext-managed, so it is treated as reserved time.
+        """
+        event_body = {
+            "summary": title,
+            "description": description or "",
+            "start": {"dateTime": start_dt_iso, "timeZone": time_zone},
+            "end": {"dateTime": end_dt_iso, "timeZone": time_zone},
+        }
+        try:
+            return self.service.events().insert(calendarId=self.calendar_id, body=event_body).execute()
+        except HttpError as error:
+            raise Exception(f"Failed to create time block event: {error}") from error
     
     def create_events_from_blocks(
         self,

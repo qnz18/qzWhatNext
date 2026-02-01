@@ -374,6 +374,53 @@ class TestCaptureEndpoint:
             assert payload["entity_kind"] == "time_block"
             assert payload["calendar_event_id"] == "evt_tb_2"
 
+    def test_capture_next_weekday_time_creates_one_off_calendar_event(self, test_client):
+        _connect_google_calendar(test_client)
+
+        # Freeze "now" so "next Tue" is deterministic.
+        from datetime import datetime as _dt
+
+        class _FixedDateTime(_dt):
+            @classmethod
+            def utcnow(cls):
+                # Monday, 2026-01-26
+                return _dt(2026, 1, 26, 12, 0, 0)
+
+        with patch("qzwhatnext.api.app.datetime", _FixedDateTime), patch(
+            "qzwhatnext.api.app.GoogleCredentials.refresh",
+            return_value=None,
+        ), patch(
+            "qzwhatnext.integrations.google_calendar.build",
+            return_value=MagicMock(),
+        ), patch(
+            "qzwhatnext.api.app.GoogleCalendarClient.get_calendar_timezone",
+            return_value="UTC",
+        ), patch(
+            "qzwhatnext.api.app.GoogleCalendarClient.create_time_block_event",
+            return_value={"id": "evt_oneoff_1"},
+        ):
+            r = test_client.post("/capture", json={"instruction": "bike ride next tues 2:30pm"})
+            assert r.status_code == 200
+            payload = r.json()
+            assert payload["entity_kind"] == "calendar_event"
+            assert payload["calendar_event_id"] == "evt_oneoff_1"
+
+    def test_capture_this_weekday_in_past_returns_400(self, test_client):
+        _connect_google_calendar(test_client)
+
+        # Freeze "now" so "this Tue" is in the past (today is Wed 2026-01-28).
+        from datetime import datetime as _dt
+
+        class _FixedDateTime(_dt):
+            @classmethod
+            def utcnow(cls):
+                return _dt(2026, 1, 28, 12, 0, 0)
+
+        with patch("qzwhatnext.api.app.datetime", _FixedDateTime):
+            r = test_client.post("/capture", json={"instruction": "bike ride this tues 2:30pm"})
+            assert r.status_code == 400
+            assert "already in the past" in (r.json().get("detail") or "").lower()
+
 
 class TestScheduleEndpoints:
     """Test schedule-related endpoints."""

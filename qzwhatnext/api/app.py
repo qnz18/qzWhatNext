@@ -54,6 +54,7 @@ from qzwhatnext.auth.dependencies import get_current_user
 from qzwhatnext.auth.shortcut_tokens import generate_shortcut_token, hash_shortcut_token
 from qzwhatnext.models.user import User
 from qzwhatnext.recurrence.interpret import interpret_capture_instruction
+from qzwhatnext.recurrence.deterministic_parser import RecurrenceParseError
 from qzwhatnext.recurrence.materialize import materialize_recurring_tasks
 from qzwhatnext.recurrence.rrule_export import preset_to_rrule
 
@@ -336,7 +337,9 @@ class CaptureRequest(BaseModel):
 
     The backend auto-determines whether this becomes:
     - a recurring task series (materialized into Task instances), or
-    - a recurring calendar/time block (Google Calendar recurring event).
+    - a recurring calendar/time block (Google Calendar recurring event),
+    - a one-off Task, or
+    - a one-off Calendar event.
 
     If entity_id is provided, the request updates that existing entity.
     """
@@ -349,7 +352,7 @@ class CaptureResponse(BaseModel):
     """Single-input capture response."""
 
     action: str = Field(..., description="created or updated")
-    entity_kind: str = Field(..., description="task_series or time_block")
+    entity_kind: str = Field(..., description="task_series, time_block, task, or calendar_event")
     entity_id: str
     tasks_created: int = 0
     calendar_event_id: Optional[str] = None
@@ -472,7 +475,7 @@ async def root():
 
         <div class="section">
             <h2>Capture (single input)</h2>
-            <p class="muted">Type what you need. qzWhatNext will decide whether to create a recurring task series or a recurring time block.</p>
+            <p class="muted">Type what you need. qzWhatNext will decide whether to create a recurring task series, a recurring time block, or (for “this/next”) a one-off.</p>
             <div id="captureForm">
                 <div class="form-group">
                     <label for="captureInstruction">Instruction *</label>
@@ -2026,8 +2029,12 @@ async def capture(
 
     # AI parsing is allowed only when not AI-excluded by prefix.
     ai_allowed = not instruction.strip().startswith(".")
-    parsed = interpret_capture_instruction(instruction, ai_allowed=ai_allowed, now=now)
-    preset_json = parsed.preset.model_dump(mode="json")
+    try:
+        parsed = interpret_capture_instruction(instruction, ai_allowed=ai_allowed, now=now)
+    except RecurrenceParseError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    preset_json = parsed.preset.model_dump(mode="json") if parsed.preset is not None else None
 
     def _next_date_for_weekly_start(d: date, by_weekday: list, *, max_days: int = 14) -> date:
         """Pick the next date on/after d matching by_weekday (Weekday enums)."""
@@ -2082,6 +2089,11 @@ async def capture(
 
     # Update flow (Phase 2)
     if request.entity_id:
+        if parsed.entity_kind in ("task", "calendar_event"):
+            raise HTTPException(
+                status_code=400,
+                detail="One-off instructions cannot update an existing entity. Use 'every ...' for repeating items.",
+            )
         series_repo = RecurringTaskSeriesRepository(db)
         time_block_repo = RecurringTimeBlockRepository(db)
 
@@ -2161,6 +2173,24 @@ async def capture(
         raise HTTPException(status_code=404, detail="Entity not found for update")
 
     # Create flow (Phase 1)
+    if parsed.entity_kind == "task":
+        repo = TaskRepository(db)
+        deadline = None
+        if parsed.one_off_date:
+            # Treat as end-of-day UTC for MVP (deterministic, timezone-naive).
+            deadline = datetime.combine(parsed.one_off_date, time(hour=23, minute=59))
+        task = create_task_base(
+            user_id=current_user.id,
+            source_type="api",
+            source_id=None,
+            title=parsed.title,
+            notes=None,
+            deadline=deadline,
+            ai_excluded=parsed.ai_excluded,
+        )
+        created_task = repo.create(task)
+        return CaptureResponse(action="created", entity_kind="task", entity_id=created_task.id, tasks_created=1)
+
     if parsed.entity_kind == "task_series":
         series_repo = RecurringTaskSeriesRepository(db)
         created_series = series_repo.create(
@@ -2186,7 +2216,36 @@ async def capture(
             tasks_created=tasks_created,
         )
 
-    # time_block
+    if parsed.entity_kind == "calendar_event":
+        calendar_client = _calendar_client_or_400()
+        tz = calendar_client.get_calendar_timezone()
+        if parsed.one_off_date is None or parsed.one_off_time_start is None or parsed.one_off_time_end is None:
+            raise HTTPException(status_code=400, detail="One-off calendar event requires date, start, and end times")
+
+        start_dt = datetime.combine(parsed.one_off_date, parsed.one_off_time_start)
+        end_dt = datetime.combine(parsed.one_off_date, parsed.one_off_time_end)
+        if parsed.one_off_time_end <= parsed.one_off_time_start:
+            end_dt = end_dt + timedelta(days=1)
+
+        created = calendar_client.create_time_block_event(
+            title=parsed.title,
+            description="",
+            start_dt_iso=start_dt.isoformat(),
+            end_dt_iso=end_dt.isoformat(),
+            time_zone=tz,
+        )
+        event_id = (created or {}).get("id")
+        if not event_id:
+            raise HTTPException(status_code=500, detail="Failed to create calendar event")
+
+        return CaptureResponse(
+            action="created",
+            entity_kind="calendar_event",
+            entity_id=event_id,
+            calendar_event_id=event_id,
+        )
+
+    # time_block (recurring)
     calendar_client = _calendar_client_or_400()
     tz = calendar_client.get_calendar_timezone()
     if parsed.preset.time_start is None or parsed.preset.time_end is None:

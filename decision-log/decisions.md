@@ -746,13 +746,17 @@ qzWhatNext supports creating and updating repeating items via a single input end
 - a **Recurring Task Series** (which materializes Task instances into the active scheduling horizon), or
 - a **Recurring Time Block** (a recurring Google Calendar event that blocks time).
 
+Additionally, if the instruction includes **one-off anchors** like “this” or “next” (and does **not** include “every”), `/capture` creates a **non-repeating** entity using the same deterministic split:
+- explicit time range or weekday+time → a **one-off Calendar event** (reserved time)
+- otherwise → a **one-off Task**
+
 Recurring time blocks are created in the user’s **Google Calendar timezone** and are treated as **user-blocked time** (reserved intervals) during schedule builds.
 
 **Rationale:**  
 Users should not need to decide “task vs time block” or remember different endpoints. A single capture flow reduces friction while preserving deterministic behavior and clear ownership boundaries in Calendar.
 
 **Implications:**  
-- A new `POST /capture` endpoint exists for create/update of recurring capture entities.
+- A new `POST /capture` endpoint exists for create/update of recurring capture entities, and create of one-off captured entities.
 - Recurring task series generate concrete Task instances, de-duped by `(user_id, recurrence_series_id, recurrence_occurrence_start)`.
 - Recurring time blocks are created as recurring Google Calendar events and are **not** marked as qzWhatNext-managed schedule events (so they behave like reserved time).
 - AI parsing may be used only when the instruction is not AI-excluded; AI-excluded instructions must never be sent to AI.

@@ -30,10 +30,13 @@ class RecurrenceParseError(ValueError):
 
 @dataclass(frozen=True)
 class ParsedCapture:
-    entity_kind: str  # "task_series" | "time_block"
+    entity_kind: str  # "task_series" | "time_block" | "task" | "calendar_event"
     title: str
-    preset: RecurrencePreset
+    preset: Optional[RecurrencePreset]
     ai_excluded: bool
+    one_off_date: Optional[date] = None
+    one_off_time_start: Optional[time] = None
+    one_off_time_end: Optional[time] = None
 
 
 _WEEKDAY_ALIASES: list[tuple[re.Pattern, Weekday]] = [
@@ -66,6 +69,44 @@ def _extract_weekdays(text: str) -> List[Weekday]:
 _TIME_RE = re.compile(
     r"\b(?P<h>\d{1,2})(?::(?P<m>\d{2}))?\s*(?P<ampm>am|pm)?\b", re.I
 )
+
+_THIS_NEXT_RE = re.compile(r"\b(this|next)\b", re.I)
+_EVERY_RE = re.compile(r"\b(every|everyday)\b", re.I)
+
+
+def _weekday_to_index(day: Weekday) -> int:
+    # Weekday enum values are like 'mo','tu'...
+    wd_map = {"mo": 0, "tu": 1, "we": 2, "th": 3, "fr": 4, "sa": 5, "su": 6}
+    return int(wd_map[day.value.lower()])
+
+
+def _resolve_this_next_weekday(
+    today: date,
+    *,
+    target: Weekday,
+    modifier: str,  # "this" | "next"
+) -> date:
+    """Resolve 'this Tue' / 'next Tue' deterministically.
+
+    Rules (product-locked):
+    - 'next Tue' = Tuesday in the following week (always >= 7 days away)
+    - 'this Tue' = Tuesday in the current week (error if already passed)
+    """
+    week_start = today - timedelta(days=today.weekday())  # Monday-start week
+    target_date = week_start + timedelta(days=_weekday_to_index(target))
+
+    mod = (modifier or "").lower().strip()
+    if mod == "next":
+        target_date = target_date + timedelta(days=7)
+    elif mod == "this":
+        if target_date < today:
+            raise RecurrenceParseError(
+                "That 'this <weekday>' date is already in the past. Use 'next <weekday>' or specify a date.",
+                missing=["date"],
+            )
+    else:
+        raise RecurrenceParseError("Unsupported date modifier", missing=["date"])
+    return target_date
 
 
 def _parse_time_token(token: str, *, context: str) -> time:
@@ -163,6 +204,12 @@ def parse_capture_instruction(text: str, *, now: Optional[datetime] = None) -> P
     # (We can refine later with AI title generation when allowed.)
     title = normalized
 
+    # One-off anchors: "this" / "next" refer to specific days and should not repeat
+    # unless the user uses "every".
+    has_this_next = bool(_THIS_NEXT_RE.search(normalized))
+    has_every = bool(_EVERY_RE.search(normalized))
+    one_off = has_this_next and not has_every
+
     # Determine if this should be a time block.
     weekdays = _extract_weekdays(normalized)
     time_range = _extract_time_range(normalized)
@@ -187,6 +234,53 @@ def parse_capture_instruction(text: str, *, now: Optional[datetime] = None) -> P
                     weekday_time = _parse_time_token(matches[-1].group(0), context="weekday_time")
                 except RecurrenceParseError:
                     weekday_time = None
+
+    # One-off behavior: anchored to "this/next <weekday>" and not repeating.
+    if one_off:
+        if not weekdays:
+            raise RecurrenceParseError(
+                "One-off instructions using 'this'/'next' must include a weekday (e.g., 'next Tue').",
+                missing=["date"],
+            )
+        if len(weekdays) != 1:
+            raise RecurrenceParseError(
+                "One-off instructions must specify exactly one weekday (e.g., 'next Tue').",
+                missing=["date"],
+            )
+        modifier = "next" if re.search(r"\bnext\b", normalized, re.I) else "this"
+        target_date = _resolve_this_next_weekday(now.date(), target=weekdays[0], modifier=modifier)
+
+        is_one_off_time_block = bool(time_range) or (weekday_time is not None)
+        if is_one_off_time_block:
+            time_start = time_range[0] if time_range else weekday_time
+            if time_start is None:
+                raise RecurrenceParseError("Time block needs a start time", missing=["time_start"])
+
+            time_end = time_range[1] if time_range else None
+            if time_end is None:
+                if duration_min:
+                    end_dt = datetime.combine(target_date, time_start) + timedelta(minutes=int(duration_min))
+                    time_end = end_dt.time()
+                else:
+                    time_end = time(hour=(time_start.hour + 1) % 24, minute=time_start.minute)
+
+            return ParsedCapture(
+                entity_kind="calendar_event",
+                title=title,
+                preset=None,
+                ai_excluded=ai_excluded,
+                one_off_date=target_date,
+                one_off_time_start=time_start,
+                one_off_time_end=time_end,
+            )
+
+        return ParsedCapture(
+            entity_kind="task",
+            title=title,
+            preset=None,
+            ai_excluded=ai_excluded,
+            one_off_date=target_date,
+        )
 
     is_time_block = bool(time_range) or (bool(weekdays) and weekday_time is not None)
     entity_kind = "time_block" if is_time_block else "task_series"
