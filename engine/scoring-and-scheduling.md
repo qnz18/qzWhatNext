@@ -52,6 +52,8 @@ A Task has the following fields:
 - updated_at: datetime
 - deleted_at: datetime or null (soft-delete timestamp; null means active)
 - deadline: datetime or null
+- start_after: date or null (do not schedule before this local date)
+- due_by: date or null (soft due date; increases urgency as it approaches)
 - estimated_duration_min: integer
 - duration_confidence: float (0–1)
 - category: work | child | family | health | personal | ideas | home | admin | unknown
@@ -336,14 +338,10 @@ All tier changes are logged and explained.
 
 ## 9. Intra-Tier Scoring
 
-Within a tier, tasks are ordered by a deterministic score derived from:
-- deadline urgency
-- risk score
-- impact score
-- dependency unlock value
-- fragmentation penalty
-
-Exact coefficients are configurable; v1 favors stability over optimization.
+Within a tier, tasks are ordered deterministically by:
+- deadline urgency (earliest deadline first)
+- due_by urgency (date-only; end-of-day in user calendar timezone; earliest due_by first)
+- stable tie-breakers (created_at, then id)
 
 ---
 

@@ -764,6 +764,26 @@ Users should not need to decide “task vs time block” or remember different e
 
 ---
 
+## D-041 — Task Start-After and Due-By (MVP)
+
+**Decision:**  
+Tasks may optionally include:
+- `start_after` (date): the scheduler must not schedule the task before this date.
+- `due_by` (date): a soft due date that increases urgency within the task’s existing tier as the date approaches/passes.
+
+`due_by` affects **within-tier ordering only** and must not move tasks across the fixed tier hierarchy.
+
+**Rationale:**  
+This provides a consistent, deterministic way to express “not before X” and “get louder by Y” for any task, without inventing special-case rolling behaviors tied to particular phrases.
+
+**Implications:**  
+- The API and DB add `start_after` and `due_by` to Task.
+- Scheduling enforces `start_after` as a hard earliest-start constraint.
+- Ranking uses `due_by` as a soft urgency signal within tier.
+**Status:** Draft (MVP)
+
+---
+
 ## Canonical Rule
 
 If a future behavior conflicts with a decision in this log:

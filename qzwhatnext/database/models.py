@@ -1,9 +1,9 @@
 """SQLAlchemy database models for qzWhatNext."""
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional, List
 import uuid
-from sqlalchemy import Column, String, Integer, Float, Boolean, DateTime, JSON, ForeignKey, UniqueConstraint
+from sqlalchemy import Column, String, Integer, Float, Boolean, Date, DateTime, JSON, ForeignKey, UniqueConstraint
 
 from typing import Union, TypeVar, Type
 from qzwhatnext.database.database import Base
@@ -78,6 +78,8 @@ class TaskDB(Base):
     
     # Scheduling fields
     deadline = Column(DateTime, nullable=True)
+    start_after = Column(Date, nullable=True, index=True)
+    due_by = Column(Date, nullable=True, index=True)
     estimated_duration_min = Column(Integer, nullable=False, default=30)
     duration_confidence = Column(Float, nullable=False, default=0.5)
     
@@ -139,6 +141,8 @@ class TaskDB(Base):
             updated_at=self.updated_at,
             deleted_at=self.deleted_at,
             deadline=self.deadline,
+            start_after=getattr(self, "start_after", None),
+            due_by=getattr(self, "due_by", None),
             estimated_duration_min=self.estimated_duration_min,
             duration_confidence=self.duration_confidence,
             category=category,
@@ -180,6 +184,8 @@ class TaskDB(Base):
             updated_at=task.updated_at,
             deleted_at=task.deleted_at,
             deadline=task.deadline,
+            start_after=getattr(task, "start_after", None),
+            due_by=getattr(task, "due_by", None),
             estimated_duration_min=task.estimated_duration_min,
             duration_confidence=task.duration_confidence,
             category=category_value,

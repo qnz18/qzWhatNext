@@ -3,7 +3,8 @@
 import logging
 import os
 import uuid
-from datetime import datetime, timedelta, timezone, date
+from datetime import datetime, timedelta, timezone, date, time
+from zoneinfo import ZoneInfo
 from typing import List, Optional, Dict, Tuple
 from urllib.parse import urlencode, urlparse, urlunparse
 
@@ -235,6 +236,8 @@ class TaskCreateRequest(BaseModel):
     title: str
     notes: Optional[str] = None
     deadline: Optional[datetime] = None
+    start_after: Optional[date] = None
+    due_by: Optional[date] = None
     estimated_duration_min: int = 30
     category: TaskCategory = TaskCategory.UNKNOWN
     source_type: str = "api"
@@ -265,6 +268,8 @@ class TaskUpdateRequest(BaseModel):
     notes: Optional[str] = None
     status: Optional[TaskStatus] = None
     deadline: Optional[datetime] = None
+    start_after: Optional[date] = None
+    due_by: Optional[date] = None
     estimated_duration_min: Optional[int] = None
     category: Optional[TaskCategory] = None
     energy_intensity: Optional[EnergyIntensity] = None
@@ -2175,17 +2180,14 @@ async def capture(
     # Create flow (Phase 1)
     if parsed.entity_kind == "task":
         repo = TaskRepository(db)
-        deadline = None
-        if parsed.one_off_date:
-            # Treat as end-of-day UTC for MVP (deterministic, timezone-naive).
-            deadline = datetime.combine(parsed.one_off_date, time(hour=23, minute=59))
         task = create_task_base(
             user_id=current_user.id,
             source_type="api",
             source_id=None,
             title=parsed.title,
             notes=None,
-            deadline=deadline,
+            start_after=getattr(parsed, "start_after", None),
+            due_by=getattr(parsed, "due_by", None),
             ai_excluded=parsed.ai_excluded,
         )
         created_task = repo.create(task)
@@ -2316,6 +2318,8 @@ async def create_task(
         title=request.title,
         notes=request.notes,
         deadline=request.deadline,
+        start_after=request.start_after,
+        due_by=request.due_by,
         estimated_duration_min=request.estimated_duration_min,
         category=request.category,
         ai_excluded=determine_ai_exclusion(request.title) if request.title else False,
@@ -2489,6 +2493,10 @@ async def update_task(
         task.status = request.status
     if request.deadline is not None:
         task.deadline = request.deadline
+    if request.start_after is not None:
+        task.start_after = request.start_after
+    if request.due_by is not None:
+        task.due_by = request.due_by
     if request.estimated_duration_min is not None:
         task.estimated_duration_min = request.estimated_duration_min
     if request.category is not None:
@@ -2769,6 +2777,7 @@ async def build_schedule(
             )
 
         calendar_client = GoogleCalendarClient(credentials=creds, calendar_id="primary")
+        calendar_tz = calendar_client.get_calendar_timezone()
 
         # Schedule window (must match both calendar query and scheduler inputs).
         # schedule_start / schedule_end were chosen above (also used for recurring task materialization).
@@ -2817,8 +2826,40 @@ async def build_schedule(
                 mins = int((b.end_time - b.start_time).total_seconds() // 60)
                 locked_minutes_by_task[b.entity_id] = locked_minutes_by_task.get(b.entity_id, 0) + max(mins, 0)
 
-        # Stack rank tasks
-        ranked_tasks = stack_rank(tasks)
+        def _date_start_utc_naive(d: date, *, time_zone_id: str) -> datetime:
+            try:
+                tzinfo = ZoneInfo(time_zone_id)
+            except Exception:
+                tzinfo = ZoneInfo("UTC")
+            local_start = datetime.combine(d, time(0, 0, 0), tzinfo=tzinfo)
+            return local_start.astimezone(timezone.utc).replace(tzinfo=None)
+
+        # Apply start_after as a hard earliest-start constraint (within this schedule window).
+        # Represent it via flexibility_window so the scheduler can enforce it deterministically.
+        tasks_with_start_after: List[Task] = []
+        for t in tasks:
+            if getattr(t, "start_after", None) is None:
+                tasks_with_start_after.append(t)
+                continue
+
+            earliest = _date_start_utc_naive(t.start_after, time_zone_id=calendar_tz)
+            existing = getattr(t, "flexibility_window", None)
+            if existing:
+                try:
+                    ws, we = existing
+                except Exception:
+                    ws, we = None, None
+                if ws is not None:
+                    earliest = max(ws, earliest)
+                latest = we if we is not None else schedule_end
+                latest = min(latest, schedule_end)
+            else:
+                latest = schedule_end
+
+            tasks_with_start_after.append(t.model_copy(update={"flexibility_window": (earliest, latest)}))
+
+        # Stack rank tasks (tier first, then urgency within tier).
+        ranked_tasks = stack_rank(tasks_with_start_after, now=schedule_start, time_zone=calendar_tz)
 
         # Schedule remaining work around locked placements.
         schedulable_tasks: List[Task] = []

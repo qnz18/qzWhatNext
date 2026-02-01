@@ -1,6 +1,6 @@
 """Task data model for qzWhatNext."""
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import List, Optional, Tuple
 from enum import Enum
 from pydantic import BaseModel, Field
@@ -46,6 +46,14 @@ class Task(BaseModel):
     updated_at: datetime = Field(..., description="Task last update timestamp")
     deleted_at: Optional[datetime] = Field(None, description="Soft-delete timestamp (null if active)")
     deadline: Optional[datetime] = Field(None, description="Task deadline")
+    start_after: Optional[date] = Field(
+        None,
+        description="Do not schedule before this date (date-only; interpreted in user's calendar timezone)",
+    )
+    due_by: Optional[date] = Field(
+        None,
+        description="Soft due date for urgency ranking (date-only; interpreted in user's calendar timezone)",
+    )
     estimated_duration_min: int = Field(30, description="Estimated duration in minutes")
     duration_confidence: float = Field(0.5, ge=0.0, le=1.0, description="Confidence in duration estimate")
     category: TaskCategory = Field(TaskCategory.UNKNOWN, description="Task category")

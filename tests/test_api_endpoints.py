@@ -421,6 +421,28 @@ class TestCaptureEndpoint:
             assert r.status_code == 400
             assert "already in the past" in (r.json().get("detail") or "").lower()
 
+    def test_capture_next_week_creates_task_with_start_after(self, test_client):
+        # Freeze "now" so "next week" is deterministic.
+        from datetime import datetime as _dt
+
+        class _FixedDateTime(_dt):
+            @classmethod
+            def utcnow(cls):
+                # Monday, 2026-01-26
+                return _dt(2026, 1, 26, 12, 0, 0)
+
+        with patch("qzwhatnext.api.app.datetime", _FixedDateTime):
+            r = test_client.post("/capture", json={"instruction": "schedule gutters sometime next week"})
+            assert r.status_code == 200
+            payload = r.json()
+            assert payload["entity_kind"] == "task"
+            assert payload["entity_id"]
+
+            tasks = test_client.get("/tasks").json()["tasks"]
+            created = [t for t in tasks if "schedule gutters" in (t.get("title") or "").lower()][0]
+            assert created["start_after"] == "2026-02-02"
+            assert created["due_by"] is None
+
 
 class TestScheduleEndpoints:
     """Test schedule-related endpoints."""

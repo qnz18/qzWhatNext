@@ -37,6 +37,8 @@ class ParsedCapture:
     one_off_date: Optional[date] = None
     one_off_time_start: Optional[time] = None
     one_off_time_end: Optional[time] = None
+    start_after: Optional[date] = None
+    due_by: Optional[date] = None
 
 
 _WEEKDAY_ALIASES: list[tuple[re.Pattern, Weekday]] = [
@@ -204,6 +206,23 @@ def parse_capture_instruction(text: str, *, now: Optional[datetime] = None) -> P
     # (We can refine later with AI title generation when allowed.)
     title = normalized
 
+    # Coarse date-window phrases (non-repeating). These should not trigger "this/next <weekday>" parsing.
+    m_next_week = re.search(r"\bnext\s+week\b", normalized, re.I)
+    m_this_week = re.search(r"\bthis\s+week\b", normalized, re.I)
+
+    if (m_next_week or m_this_week) and not _EVERY_RE.search(normalized):
+        today = now.date()
+        this_week_start = today - timedelta(days=today.weekday())  # Monday
+        start_after = this_week_start + timedelta(days=7) if m_next_week else this_week_start
+        return ParsedCapture(
+            entity_kind="task",
+            title=title,
+            preset=None,
+            ai_excluded=ai_excluded,
+            start_after=start_after,
+            due_by=None,
+        )
+
     # One-off anchors: "this" / "next" refer to specific days and should not repeat
     # unless the user uses "every".
     has_this_next = bool(_THIS_NEXT_RE.search(normalized))
@@ -280,6 +299,8 @@ def parse_capture_instruction(text: str, *, now: Optional[datetime] = None) -> P
             preset=None,
             ai_excluded=ai_excluded,
             one_off_date=target_date,
+            start_after=target_date,
+            due_by=target_date,
         )
 
     is_time_block = bool(time_range) or (bool(weekdays) and weekday_time is not None)

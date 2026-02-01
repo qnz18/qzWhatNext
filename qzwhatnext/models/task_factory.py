@@ -5,7 +5,7 @@ and ensure consistent default values across the application.
 """
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional, Dict, Any
 
 from qzwhatnext.models.task import Task, TaskStatus, TaskCategory
@@ -41,6 +41,8 @@ def create_task_defaults() -> Dict[str, Any]:
     return {
         "status": TaskStatus.OPEN,
         "deadline": None,
+        "start_after": None,
+        "due_by": None,
         "estimated_duration_min": DEFAULT_DURATION_MINUTES,
         "duration_confidence": DEFAULT_DURATION_CONFIDENCE,
         "category": TaskCategory.UNKNOWN,
@@ -63,6 +65,8 @@ def create_task_base(
     title: str,
     notes: Optional[str] = None,
     deadline: Optional[datetime] = None,
+    start_after: Optional[date] = None,
+    due_by: Optional[date] = None,
     estimated_duration_min: Optional[int] = None,
     duration_confidence: Optional[float] = None,
     category: Optional[TaskCategory] = None,
@@ -123,6 +127,8 @@ def create_task_base(
         created_at=now,
         updated_at=now,
         deadline=deadline if deadline is not None else defaults["deadline"],
+        start_after=start_after if start_after is not None else defaults["start_after"],
+        due_by=due_by if due_by is not None else defaults["due_by"],
         estimated_duration_min=estimated_duration_min if estimated_duration_min is not None else defaults["estimated_duration_min"],
         duration_confidence=duration_confidence if duration_confidence is not None else defaults["duration_confidence"],
         category=category if category is not None else defaults["category"],
