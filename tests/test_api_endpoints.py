@@ -352,6 +352,25 @@ class TestCaptureEndpoint:
         tasks = test_client.get("/tasks").json()["tasks"]
         assert any("vitamins" in (t["title"] or "").lower() for t in tasks)
 
+    def test_capture_vitamins_every_morning_schedules_at_least_one_occurrence(self, test_client):
+        """A daily morning habit should schedule at least one occurrence in a mostly-empty calendar."""
+        _connect_google_calendar(test_client)
+
+        cap = test_client.post("/capture", json={"instruction": "take my vitamins every morning"})
+        assert cap.status_code == 200
+        assert cap.json()["entity_kind"] == "task_series"
+
+        build = _post_schedule_with_calendar(test_client, events=[], horizon_days=7)
+        assert build.status_code == 200
+        data = build.json()
+
+        titles = data.get("task_titles") or {}
+        blocks = data.get("scheduled_blocks") or []
+        assert any(
+            (b.get("entity_type") == "task" and "vitamin" in (titles.get(b.get("entity_id"), "") or "").lower())
+            for b in blocks
+        )
+
     def test_capture_creates_and_updates_recurring_time_block(self, test_client):
         _connect_google_calendar(test_client)
 

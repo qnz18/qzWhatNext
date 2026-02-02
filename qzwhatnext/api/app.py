@@ -2561,12 +2561,19 @@ async def capture(
 
     if parsed.entity_kind == "task_series":
         series_repo = RecurringTaskSeriesRepository(db)
+        # Deterministic defaults for common quick health habits.
+        # These defaults matter because tiering is deterministic and recurrence tasks may have tight windows.
+        title_lc = (parsed.title or "").lower()
+        is_vitamins = ("vitamin" in title_lc) or ("vitamins" in title_lc)
+        is_meds = ("med" in title_lc) or ("medicine" in title_lc) or ("meds" in title_lc)
+        default_category = TaskCategory.HEALTH.value if (is_vitamins or is_meds) else TaskCategory.UNKNOWN.value
+        default_duration = 5 if (is_vitamins or is_meds) else 30
         created_series = series_repo.create(
             user_id=current_user.id,
             title_template=parsed.title,
             notes_template=None,
-            estimated_duration_min_default=30,
-            category_default=TaskCategory.UNKNOWN.value,
+            estimated_duration_min_default=default_duration,
+            category_default=default_category,
             recurrence_preset=preset_json,
             ai_excluded=parsed.ai_excluded,
         )

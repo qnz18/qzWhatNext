@@ -112,10 +112,9 @@ def schedule_tasks(
                 result.overflow_tasks.append(task)
                 continue
         
-        # Calculate how many 30-minute blocks we need
-        duration_minutes = task.estimated_duration_min
-        blocks_needed = max(1, (duration_minutes + SCHEDULING_GRANULARITY_MINUTES - 1) // SCHEDULING_GRANULARITY_MINUTES)
-        total_duration = blocks_needed * SCHEDULING_GRANULARITY_MINUTES
+        # Duration in minutes (may be < scheduling granularity; we still allow that)
+        duration_minutes = int(task.estimated_duration_min)
+        duration_minutes = max(duration_minutes, 1)
 
         # Establish earliest candidate start for this task (respecting flexibility window).
         task_start = current_time
@@ -126,10 +125,12 @@ def schedule_tasks(
             continue
 
         # Fast coarse check (does not account for reserved jumps, but avoids work when impossible).
-        if task_start + timedelta(minutes=total_duration) > end_time:
+        # IMPORTANT: use the true duration here (not rounded up), since we allow sub-granularity blocks
+        # and rounding here would incorrectly overflow short tasks near the end of a window.
+        if task_start + timedelta(minutes=duration_minutes) > end_time:
             result.overflow_tasks.append(task)
             continue
-        if window_end is not None and task_start + timedelta(minutes=total_duration) > window_end:
+        if window_end is not None and task_start + timedelta(minutes=duration_minutes) > window_end:
             result.overflow_tasks.append(task)
             continue
 

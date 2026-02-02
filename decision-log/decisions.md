@@ -814,6 +814,12 @@ Users expect schedule times to match what they see in Google Calendar; displayin
 
 ---
 
+## D-044 — Deterministic Defaults for Common Health Habits (MVP)
+
+**Decision:**  
+When creating a recurring task series from natural language, the system applies small **deterministic defaults** for common health habits so they are schedulable within tight time-of-day windows.\n\nCurrently:\n- Instructions containing “vitamin(s)” or “med(s)/medicine” default to:\n  - `category_default = health`\n  - `estimated_duration_min_default = 5`\n+
+**Rationale:**  \n+If these series default to `unknown` + 30 minutes, they often become low-tier and overflow after their morning window passes. These deterministic defaults improve schedulability without requiring the user to specify duration or category.\n+
+**Implications:**  \n+- Affects recurring task series created via `POST /capture`.\n+- AI exclusion rules still apply; this is deterministic and does not call AI.\n+**Status:** Draft (MVP)\n+\n+---\n+
 ## Canonical Rule
 
 If a future behavior conflicts with a decision in this log:
