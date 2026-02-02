@@ -456,6 +456,105 @@ async def root():
                 <button onclick="viewTasks()">Refresh Tasks</button>
                 <span id="tasksUpdated" class="muted wrap"></span>
             </div>
+            <div style="margin-top: 10px; padding: 10px; border: 1px solid #e5e5e5; border-radius: 6px;">
+                <div class="row" style="align-items: end;">
+                    <div class="wrap">
+                        <label for="editTaskId">Edit task (by id)</label>
+                        <input type="text" id="editTaskId" placeholder="Paste a task id">
+                    </div>
+                    <button type="button" onclick="loadTaskForEdit()">Load</button>
+                    <button type="button" onclick="saveTaskEdits()">Save</button>
+                </div>
+
+                <div class="muted" style="margin-top: 8px;">
+                    Protected fields (read-only): id, user_id, source, created/updated, recurrence, ai_excluded.
+                </div>
+
+                <div class="row" style="margin-top: 8px;">
+                    <div class="wrap"><div class="muted">id</div><div id="editTaskIdRO" class="wrap"></div></div>
+                    <div class="wrap"><div class="muted">user_id</div><div id="editTaskUserIdRO" class="wrap"></div></div>
+                </div>
+                <div class="row" style="margin-top: 6px;">
+                    <div class="wrap"><div class="muted">source</div><div id="editTaskSourceRO" class="wrap"></div></div>
+                    <div class="wrap"><div class="muted">created_at</div><div id="editTaskCreatedAtRO" class="wrap"></div></div>
+                    <div class="wrap"><div class="muted">updated_at</div><div id="editTaskUpdatedAtRO" class="wrap"></div></div>
+                </div>
+                <div class="row" style="margin-top: 6px;">
+                    <div class="wrap"><div class="muted">recurrence</div><div id="editTaskRecurrenceRO" class="wrap"></div></div>
+                    <div class="wrap"><div class="muted">ai_excluded</div><div id="editTaskAiExcludedRO" class="wrap"></div></div>
+                </div>
+
+                <div class="row" style="margin-top: 10px;">
+                    <div class="wrap" style="min-width: 260px;">
+                        <label for="editTaskTitle">Title</label>
+                        <input type="text" id="editTaskTitle">
+                    </div>
+                    <div class="wrap" style="min-width: 200px;">
+                        <label for="editTaskStatus">Status</label>
+                        <select id="editTaskStatus">
+                            <option value="open" selected>open</option>
+                            <option value="completed">completed</option>
+                        </select>
+                    </div>
+                    <div class="wrap" style="min-width: 180px;">
+                        <label for="editTaskDuration">Duration (min)</label>
+                        <input type="number" id="editTaskDuration" min="1" value="30">
+                    </div>
+                </div>
+
+                <div class="row" style="margin-top: 8px;">
+                    <div class="wrap" style="min-width: 220px;">
+                        <label for="editTaskCategory">Category</label>
+                        <select id="editTaskCategory">
+                            <option value="work">Work</option>
+                            <option value="child">Child</option>
+                            <option value="family">Family</option>
+                            <option value="health">Health</option>
+                            <option value="personal">Personal</option>
+                            <option value="ideas">Ideas</option>
+                            <option value="home">Home</option>
+                            <option value="admin">Admin</option>
+                            <option value="unknown" selected>Unknown</option>
+                        </select>
+                    </div>
+                    <div class="wrap" style="min-width: 220px;">
+                        <label for="editTaskEnergy">Energy</label>
+                        <select id="editTaskEnergy">
+                            <option value="low">low</option>
+                            <option value="medium" selected>medium</option>
+                            <option value="high">high</option>
+                        </select>
+                    </div>
+                    <div class="wrap" style="min-width: 180px;">
+                        <label for="editTaskRisk">Risk (0-1)</label>
+                        <input type="number" id="editTaskRisk" min="0" max="1" step="0.01" placeholder="(blank clears)">
+                    </div>
+                    <div class="wrap" style="min-width: 180px;">
+                        <label for="editTaskImpact">Impact (0-1)</label>
+                        <input type="number" id="editTaskImpact" min="0" max="1" step="0.01" placeholder="(blank clears)">
+                    </div>
+                </div>
+
+                <div class="row" style="margin-top: 8px;">
+                    <div class="wrap" style="min-width: 220px;">
+                        <label for="editTaskStartAfter">Start after (YYYY-MM-DD)</label>
+                        <input type="date" id="editTaskStartAfter">
+                    </div>
+                    <div class="wrap" style="min-width: 220px;">
+                        <label for="editTaskDueBy">Due by (YYYY-MM-DD)</label>
+                        <input type="date" id="editTaskDueBy">
+                    </div>
+                    <div class="wrap" style="min-width: 360px;">
+                        <label for="editTaskDependencies">Dependencies (comma-separated ids)</label>
+                        <input type="text" id="editTaskDependencies" placeholder="id1, id2, id3">
+                    </div>
+                </div>
+
+                <div class="form-group" style="margin-top: 8px;">
+                    <label for="editTaskNotes">Notes</label>
+                    <textarea id="editTaskNotes" rows="2" placeholder="(blank clears)"></textarea>
+                </div>
+            </div>
             <div class="tasks-actions">
                 <label>
                     <input type="checkbox" id="selectAllTasks" onchange="toggleSelectAllTasks(this.checked)">
@@ -1339,6 +1438,115 @@ async def root():
                     tasksDiv.innerHTML = 'Error: ' + error.message;
                     const tasksUpdated = document.getElementById('tasksUpdated');
                     if (tasksUpdated) tasksUpdated.textContent = 'Refresh failed.';
+                }
+            }
+
+            // ----- Task Edit (UI) -----
+            let currentEditTaskId = null;
+
+            function _getVal(id) {
+                const el = document.getElementById(id);
+                return el ? el.value : '';
+            }
+
+            function _setVal(id, v) {
+                const el = document.getElementById(id);
+                if (el) el.value = (v === null || v === undefined) ? '' : String(v);
+            }
+
+            function _setText(id, v) {
+                const el = document.getElementById(id);
+                if (el) el.textContent = (v === null || v === undefined) ? '' : String(v);
+            }
+
+            async function loadTaskForEdit() {
+                const version = authVersion;
+                const status = document.getElementById('status');
+                const taskId = _getVal('editTaskId').trim();
+                if (!taskId) return;
+                status.innerHTML = 'Loading task...';
+                try {
+                    const res = await apiFetch(`/tasks/${encodeURIComponent(taskId)}`, {}, version);
+                    const data = await res.json();
+                    if (isStale(version)) return;
+                    if (!res.ok) {
+                        throw new Error((data && data.detail) ? String(data.detail) : `Failed to load task (HTTP ${res.status})`);
+                    }
+                    const t = data.task;
+                    currentEditTaskId = t.id;
+
+                    // Protected (read-only)
+                    _setText('editTaskIdRO', t.id);
+                    _setText('editTaskUserIdRO', t.user_id);
+                    _setText('editTaskSourceRO', `${t.source_type || ''}${t.source_id ? ' · ' + t.source_id : ''}`);
+                    _setText('editTaskCreatedAtRO', t.created_at || '');
+                    _setText('editTaskUpdatedAtRO', t.updated_at || '');
+                    _setText('editTaskRecurrenceRO', `${t.recurrence_series_id || ''}${t.recurrence_occurrence_start ? ' · ' + t.recurrence_occurrence_start : ''}`);
+                    _setText('editTaskAiExcludedRO', t.ai_excluded ? 'true' : 'false');
+
+                    // Editable
+                    _setVal('editTaskTitle', t.title || '');
+                    _setVal('editTaskNotes', t.notes || '');
+                    _setVal('editTaskStatus', t.status || 'open');
+                    _setVal('editTaskDuration', t.estimated_duration_min || 30);
+                    _setVal('editTaskCategory', t.category || 'unknown');
+                    _setVal('editTaskEnergy', t.energy_intensity || 'medium');
+                    _setVal('editTaskRisk', t.risk_score != null ? t.risk_score : '');
+                    _setVal('editTaskImpact', t.impact_score != null ? t.impact_score : '');
+                    _setVal('editTaskDependencies', Array.isArray(t.dependencies) ? t.dependencies.join(', ') : '');
+                    _setVal('editTaskStartAfter', t.start_after || '');
+                    _setVal('editTaskDueBy', t.due_by || '');
+
+                    status.innerHTML = 'Task loaded.';
+                } catch (e) {
+                    if (!isStale(version)) {
+                        status.innerHTML = 'Error: ' + (e && e.message ? e.message : String(e));
+                    }
+                }
+            }
+
+            async function saveTaskEdits() {
+                const version = authVersion;
+                const status = document.getElementById('status');
+                if (!currentEditTaskId) {
+                    status.innerHTML = 'Error: load a task first.';
+                    return;
+                }
+                status.innerHTML = 'Saving task...';
+                try {
+                    const payload = {
+                        title: _getVal('editTaskTitle'),
+                        notes: _getVal('editTaskNotes') || null,
+                        status: _getVal('editTaskStatus') || null,
+                        estimated_duration_min: parseInt(_getVal('editTaskDuration') || '30', 10),
+                        category: _getVal('editTaskCategory') || null,
+                        energy_intensity: _getVal('editTaskEnergy') || null,
+                        risk_score: (_getVal('editTaskRisk') === '') ? null : parseFloat(_getVal('editTaskRisk')),
+                        impact_score: (_getVal('editTaskImpact') === '') ? null : parseFloat(_getVal('editTaskImpact')),
+                        dependencies: (_getVal('editTaskDependencies') || '').split(',').map(s => s.trim()).filter(Boolean),
+                        start_after: _getVal('editTaskStartAfter') || null,
+                        due_by: _getVal('editTaskDueBy') || null,
+                    };
+
+                    const res = await apiFetch(`/tasks/${encodeURIComponent(currentEditTaskId)}`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload),
+                    }, version);
+                    const data = await res.json();
+                    if (isStale(version)) return;
+                    if (!res.ok) {
+                        throw new Error((data && data.detail) ? String(data.detail) : `Failed to save task (HTTP ${res.status})`);
+                    }
+                    status.innerHTML = 'Task saved.';
+                    await viewTasks(version);
+                    // Reload to refresh protected/derived fields (e.g., ai_excluded).
+                    _setVal('editTaskId', currentEditTaskId);
+                    await loadTaskForEdit();
+                } catch (e) {
+                    if (!isStale(version)) {
+                        status.innerHTML = 'Error: ' + (e && e.message ? e.message : String(e));
+                    }
                 }
             }
 
@@ -2497,31 +2705,35 @@ async def update_task(
     if not task:
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
     
-    # Update fields from request (only provided fields)
-    if request.title is not None:
-        task.title = request.title
-    if request.notes is not None:
+    # Update fields from request.
+    # Use `model_fields_set` so we can distinguish "not provided" vs "explicitly null" (clears field).
+    fields_set = getattr(request, "model_fields_set", set()) or set()
+
+    if "title" in fields_set:
+        task.title = request.title or ""
+        # ai_excluded is derived from the leading '.' rule and is not directly editable.
+        task.ai_excluded = determine_ai_exclusion(task.title)
+
+    if "notes" in fields_set:
         task.notes = request.notes
-    if request.status is not None:
+    if "status" in fields_set and request.status is not None:
         task.status = request.status
-    if request.deadline is not None:
+    if "deadline" in fields_set:
         task.deadline = request.deadline
-    if request.start_after is not None:
+    if "start_after" in fields_set:
         task.start_after = request.start_after
-    if request.due_by is not None:
+    if "due_by" in fields_set:
         task.due_by = request.due_by
-    if request.estimated_duration_min is not None:
+    if "estimated_duration_min" in fields_set and request.estimated_duration_min is not None:
         task.estimated_duration_min = request.estimated_duration_min
-    if request.category is not None:
+    if "category" in fields_set and request.category is not None:
         task.category = request.category
-    if request.energy_intensity is not None:
+    if "energy_intensity" in fields_set and request.energy_intensity is not None:
         task.energy_intensity = request.energy_intensity
-    if request.risk_score is not None:
+    if "risk_score" in fields_set:
         task.risk_score = request.risk_score
-    if request.impact_score is not None:
+    if "impact_score" in fields_set:
         task.impact_score = request.impact_score
-    if request.ai_excluded is not None:
-        task.ai_excluded = request.ai_excluded
     
     task.updated_at = datetime.utcnow()
     

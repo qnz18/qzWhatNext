@@ -91,6 +91,8 @@ class TaskRepository:
         task_db.status = status_value
         task_db.updated_at = task.updated_at
         task_db.deadline = task.deadline
+        task_db.start_after = getattr(task, "start_after", None)
+        task_db.due_by = getattr(task, "due_by", None)
         task_db.estimated_duration_min = task.estimated_duration_min
         task_db.duration_confidence = task.duration_confidence
         task_db.category = category_value

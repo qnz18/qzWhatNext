@@ -146,6 +146,36 @@ class TestTaskEndpoints:
         task = response.json()["task"]
         assert task["title"] == "Updated Title"
         assert task["category"] == "work"
+
+    def test_update_task_allows_clearing_dates_and_derives_ai_excluded_from_title(self, test_client):
+        """PUT /tasks/{task_id} supports clearing start_after/due_by and derives ai_excluded from title prefix."""
+        create_response = test_client.post(
+            "/tasks",
+            json={
+                "title": "Windowed task",
+                "category": "unknown",
+                "start_after": "2026-02-03",
+                "due_by": "2026-02-07",
+            },
+        )
+        assert create_response.status_code == 201
+        task_id = create_response.json()["task"]["id"]
+
+        # Clear the dates and set ai_excluded by title prefix.
+        update_response = test_client.put(
+            f"/tasks/{task_id}",
+            json={
+                "title": ".Private windowed task",
+                "start_after": None,
+                "due_by": None,
+            },
+        )
+        assert update_response.status_code == 200
+        task = update_response.json()["task"]
+        assert task["title"].startswith(".")
+        assert task["ai_excluded"] is True
+        assert task["start_after"] is None
+        assert task["due_by"] is None
     
     def test_delete_task(self, test_client):
         """Test DELETE /tasks/{task_id} endpoint."""
