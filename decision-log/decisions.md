@@ -799,6 +799,21 @@ The schedule build horizon is user-adjustable to one of: **7, 14, or 30 days** (
 
 ---
 
+## D-043 — UI Time Display Uses Calendar Timezone (MVP)
+
+**Decision:**  
+The web UI displays all schedule/task timestamps in the user’s **Google Calendar timezone** (IANA tz ID). If the Calendar timezone is not available, the UI falls back to the **browser timezone**.
+
+**Rationale:**  
+Users expect schedule times to match what they see in Google Calendar; displaying in the wrong timezone breaks trust and makes planning error-prone.
+
+**Implications:**  
+- `POST /schedule` includes a `time_zone` field in its response (best-effort), so the UI can render timestamps correctly.
+- If `time_zone` is missing, the UI uses the browser timezone for display.
+**Status:** Draft (MVP)
+
+---
+
 ## Canonical Rule
 
 If a future behavior conflicts with a decision in this log:

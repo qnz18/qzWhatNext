@@ -369,6 +369,10 @@ class ScheduleResponse(BaseModel):
     overflow_tasks: List[Task]
     start_time: Optional[datetime]
     task_titles: Dict[str, str] = Field(default_factory=dict, description="Map of entity_id to task title")
+    time_zone: Optional[str] = Field(
+        None,
+        description="User's Google Calendar timezone for display/scheduling (if available)",
+    )
 
 
 class SyncResponse(BaseModel):
@@ -430,6 +434,8 @@ async def root():
             .tasks-actions label { white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; font-weight: normal; margin-top: 0; }
             .tasks-actions-bottom { margin-top: 10px; display: flex; gap: 10px; justify-content: flex-start; flex-wrap: wrap; }
             .tasks-actions-bottom button { width: auto; padding: 6px 12px; font-size: 0.9em; }
+            tr.task-row { cursor: pointer; }
+            tr.task-row.highlighted { background-color: #fff3cd; }
         </style>
     </head>
     <body>
@@ -456,11 +462,18 @@ async def root():
                 <button onclick="viewTasks()">Refresh Tasks</button>
                 <span id="tasksUpdated" class="muted wrap"></span>
             </div>
-            <div style="margin-top: 10px; padding: 10px; border: 1px solid #e5e5e5; border-radius: 6px;">
+            <div class="tasks-actions">
+                <label>
+                    <input type="checkbox" id="selectAllTasks" onchange="toggleSelectAllTasks(this.checked)">
+                    Select all
+                </label>
+            </div>
+            <div id="tasks"></div>
+            <div id="taskEditorPanel" style="margin-top: 12px; padding: 10px; border: 1px solid #e5e5e5; border-radius: 6px;">
                 <div class="row" style="align-items: end;">
                     <div class="wrap">
-                        <label for="editTaskId">Edit task (by id)</label>
-                        <input type="text" id="editTaskId" placeholder="Paste a task id">
+                        <label for="editTaskId">Task editor</label>
+                        <input type="text" id="editTaskId" placeholder="Click a task above to load it, or paste a task id">
                     </div>
                     <button type="button" onclick="loadTaskForEdit()">Load</button>
                     <button type="button" onclick="saveTaskEdits()">Save</button>
@@ -555,13 +568,6 @@ async def root():
                     <textarea id="editTaskNotes" rows="2" placeholder="(blank clears)"></textarea>
                 </div>
             </div>
-            <div class="tasks-actions">
-                <label>
-                    <input type="checkbox" id="selectAllTasks" onchange="toggleSelectAllTasks(this.checked)">
-                    Select all
-                </label>
-            </div>
-            <div id="tasks"></div>
         </div>
 
         <div class="section">
@@ -584,6 +590,7 @@ async def root():
         
         <div class="section">
             <h2>Schedule</h2>
+            <div id="scheduleFilterInfo" class="muted" style="margin-bottom: 8px;"></div>
             <div id="schedule"></div>
         </div>
 
@@ -1266,7 +1273,9 @@ async def root():
                     const data = await response.json();
                     if (isStale(version)) return;
                     status.innerHTML = `Schedule built: ${data.scheduled_blocks.length} blocks, ${data.overflow_tasks.length} overflow`;
-                    await viewSchedule(version);
+                    // Use the build response directly so we can capture the calendar timezone for display.
+                    lastScheduleData = data;
+                    renderSchedule(data);
                 } catch (error) {
                     if (!isStale(version)) {
                         status.innerHTML = 'Error: ' + error.message;
@@ -1412,8 +1421,9 @@ async def root():
                     data.tasks.forEach(task => {
                         const notes = task.notes ? task.notes.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;') : '';
                         const checked = selectedTaskIds.has(task.id) ? 'checked' : '';
-                        html += `<tr>
-                            <td class="select-col"><input type="checkbox" class="task-select" ${checked} onchange="toggleTaskSelection('${task.id}', this.checked)"></td>
+                        const hl = (highlightedTaskId && highlightedTaskId === task.id) ? 'highlighted' : '';
+                        html += `<tr class="task-row ${hl}" data-task-id="${task.id}" onclick="highlightTask('${task.id}')">
+                            <td class="select-col"><input type="checkbox" class="task-select" ${checked} onclick="event.stopPropagation()" onchange="toggleTaskSelection('${task.id}', this.checked)"></td>
                             <td>${task.title}</td>
                             <td>${task.category || 'N/A'}</td>
                             <td>${task.estimated_duration_min || 30} min</td>
@@ -1432,6 +1442,7 @@ async def root():
                     
                     tasksDiv.innerHTML = html;
                     updateTaskSelectionUi();
+                    if (highlightedTaskId) applyTaskRowHighlight(highlightedTaskId);
                     if (tasksUpdated) tasksUpdated.textContent = `Last refreshed: ${new Date().toLocaleString()}`;
                 } catch (error) {
                     if (isStale(version)) return;
@@ -1443,6 +1454,47 @@ async def root():
 
             // ----- Task Edit (UI) -----
             let currentEditTaskId = null;
+            let highlightedTaskId = null;
+            let lastScheduleData = null;
+            let lastScheduleTimeZone = null; // persisted best-effort from last schedule fetch
+
+            function getBrowserTimeZone() {
+                try {
+                    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+                    return tz || null;
+                } catch (e) {
+                    return null;
+                }
+            }
+
+            function getUiTimeZone() {
+                // Prefer last-known calendar timezone (from /schedule response), else localStorage, else browser.
+                if (lastScheduleTimeZone) return lastScheduleTimeZone;
+                try {
+                    const stored = window.localStorage ? window.localStorage.getItem('qz_calendar_time_zone') : null;
+                    if (stored) return stored;
+                } catch (e) { /* ignore */ }
+                return getBrowserTimeZone() || 'UTC';
+            }
+
+            function formatDateTimeInTz(isoString) {
+                if (!isoString) return '';
+                const tz = getUiTimeZone();
+                try {
+                    const d = new Date(isoString);
+                    if (isNaN(d.getTime())) return String(isoString);
+                    return new Intl.DateTimeFormat(undefined, {
+                        timeZone: tz,
+                        year: 'numeric',
+                        month: '2-digit',
+                        day: '2-digit',
+                        hour: 'numeric',
+                        minute: '2-digit',
+                    }).format(d);
+                } catch (e) {
+                    try { return new Date(isoString).toLocaleString(); } catch (_) { return String(isoString); }
+                }
+            }
 
             function _getVal(id) {
                 const el = document.getElementById(id);
@@ -1479,8 +1531,8 @@ async def root():
                     _setText('editTaskIdRO', t.id);
                     _setText('editTaskUserIdRO', t.user_id);
                     _setText('editTaskSourceRO', `${t.source_type || ''}${t.source_id ? ' · ' + t.source_id : ''}`);
-                    _setText('editTaskCreatedAtRO', t.created_at || '');
-                    _setText('editTaskUpdatedAtRO', t.updated_at || '');
+                    _setText('editTaskCreatedAtRO', t.created_at ? formatDateTimeInTz(t.created_at) : '');
+                    _setText('editTaskUpdatedAtRO', t.updated_at ? formatDateTimeInTz(t.updated_at) : '');
                     _setText('editTaskRecurrenceRO', `${t.recurrence_series_id || ''}${t.recurrence_occurrence_start ? ' · ' + t.recurrence_occurrence_start : ''}`);
                     _setText('editTaskAiExcludedRO', t.ai_excluded ? 'true' : 'false');
 
@@ -1503,6 +1555,28 @@ async def root():
                         status.innerHTML = 'Error: ' + (e && e.message ? e.message : String(e));
                     }
                 }
+            }
+
+            function applyTaskRowHighlight(taskId) {
+                const rows = document.querySelectorAll('tr.task-row');
+                rows.forEach((r) => {
+                    const rid = r.getAttribute('data-task-id');
+                    if (rid && rid === taskId) r.classList.add('highlighted');
+                    else r.classList.remove('highlighted');
+                });
+            }
+
+            async function highlightTask(taskId) {
+                highlightedTaskId = taskId;
+                _setVal('editTaskId', taskId);
+                applyTaskRowHighlight(taskId);
+                try { await loadTaskForEdit(); } catch (_) { /* ignore */ }
+                refreshScheduleView();
+                // Scroll editor into view (best-effort)
+                try {
+                    const panel = document.getElementById('taskEditorPanel');
+                    if (panel) panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                } catch (_) { /* ignore */ }
             }
 
             async function saveTaskEdits() {
@@ -1567,6 +1641,7 @@ async def root():
                 if (checked) selectedTaskIds.add(taskId);
                 else selectedTaskIds.delete(taskId);
                 updateTaskSelectionUi();
+                refreshScheduleView();
             }
 
             function toggleSelectAllTasks(checked) {
@@ -1579,6 +1654,7 @@ async def root():
                 const boxes = document.querySelectorAll('input.task-select');
                 boxes.forEach(b => { b.checked = checked; });
                 updateTaskSelectionUi();
+                refreshScheduleView();
             }
 
             async function deleteSelectedTasks() {
@@ -1633,47 +1709,116 @@ async def root():
                 }
             }
             
+            function _filterScheduleBlocksForHighlightedTask(blocks) {
+                if (!highlightedTaskId) return [];
+                const taskBlocks = (blocks || []).filter(b => b.entity_type === 'task' && b.entity_id === highlightedTaskId);
+                if (taskBlocks.length === 0) return [];
+
+                const toMs = (iso) => {
+                    try { return new Date(iso).getTime(); } catch (_) { return NaN; }
+                };
+                const taskStarts = new Set(taskBlocks.map(b => toMs(b.start_time)));
+                const taskEnds = new Set(taskBlocks.map(b => toMs(b.end_time)));
+
+                const adjacentTransitions = (blocks || []).filter((b) => {
+                    if (b.entity_type !== 'transition') return false;
+                    const s = toMs(b.start_time);
+                    const e = toMs(b.end_time);
+                    // Transition ends at task start OR starts at task end
+                    return taskStarts.has(e) || taskEnds.has(s);
+                });
+
+                const keep = new Map();
+                [...taskBlocks, ...adjacentTransitions].forEach(b => keep.set(b.id, b));
+                return Array.from(keep.values()).sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
+            }
+
+            function renderSchedule(data) {
+                const scheduleDiv = document.getElementById('schedule');
+                const filterInfo = document.getElementById('scheduleFilterInfo');
+                if (!scheduleDiv) return;
+
+                const selectAll = document.getElementById('selectAllTasks');
+                const showAll = !!(selectAll && selectAll.checked);
+
+                const tz = (data && data.time_zone) ? String(data.time_zone) : null;
+                if (tz) {
+                    lastScheduleTimeZone = tz;
+                    try { if (window.localStorage) window.localStorage.setItem('qz_calendar_time_zone', tz); } catch (_) { /* ignore */ }
+                }
+
+                if (!data || !Array.isArray(data.scheduled_blocks)) {
+                    scheduleDiv.innerHTML = '<p>Unexpected response from /schedule</p>';
+                    if (filterInfo) filterInfo.textContent = '';
+                    return;
+                }
+
+                const allBlocks = data.scheduled_blocks || [];
+                let blocksToRender = [];
+
+                if (showAll) {
+                    blocksToRender = allBlocks;
+                    if (filterInfo) filterInfo.textContent = `Showing all schedule blocks (Select all enabled). Timezone: ${getUiTimeZone()}`;
+                } else if (highlightedTaskId) {
+                    blocksToRender = _filterScheduleBlocksForHighlightedTask(allBlocks);
+                    const title = (data.task_titles && data.task_titles[highlightedTaskId]) ? data.task_titles[highlightedTaskId] : highlightedTaskId;
+                    if (filterInfo) filterInfo.textContent = `Showing schedule blocks for highlighted task: ${title}. Timezone: ${getUiTimeZone()}`;
+                } else {
+                    if (filterInfo) filterInfo.textContent = `Click a task to see its schedule blocks. Timezone: ${getUiTimeZone()}`;
+                    scheduleDiv.innerHTML = '<p>No task selected. Click a task to see its scheduled blocks.</p>';
+                    return;
+                }
+
+                if (blocksToRender.length === 0) {
+                    scheduleDiv.innerHTML = '<p>No schedule blocks for this selection. Build a schedule first, or pick a different task.</p>';
+                    return;
+                }
+
+                let html = '<table><tr><th>Start</th><th>End</th><th>Task</th><th>Freeze</th></tr>';
+                blocksToRender.forEach(block => {
+                    let taskName = 'Unknown';
+                    if (block.entity_type === 'task' && data.task_titles && data.task_titles[block.entity_id]) {
+                        taskName = data.task_titles[block.entity_id];
+                    } else if (block.entity_type === 'transition') {
+                        taskName = 'Transition';
+                    } else {
+                        taskName = block.entity_id;
+                    }
+                    const checked = block.locked ? 'checked' : '';
+                    html += `<tr>
+                        <td>${formatDateTimeInTz(block.start_time)}</td>
+                        <td>${formatDateTimeInTz(block.end_time)}</td>
+                        <td>${taskName}</td>
+                        <td><input type="checkbox" ${checked} onchange="toggleFreeze('${block.id}', this.checked)"></td>
+                    </tr>`;
+                });
+                html += '</table>';
+
+                // Only show overflow in "all blocks" mode to avoid confusion when filtered.
+                if (showAll && data.overflow_tasks && data.overflow_tasks.length > 0) {
+                    html += `<p><strong>Overflow tasks (${data.overflow_tasks.length}):</strong></p><ul>`;
+                    data.overflow_tasks.forEach(task => { html += `<li>${task.title}</li>`; });
+                    html += '</ul>';
+                }
+
+                scheduleDiv.innerHTML = html;
+            }
+
+            function refreshScheduleView() {
+                if (lastScheduleData) {
+                    renderSchedule(lastScheduleData);
+                }
+            }
+
             async function viewSchedule(version = authVersion) {
                 const scheduleDiv = document.getElementById('schedule');
                 try {
                     const response = await apiFetch('/schedule', {}, version);
                     const data = await response.json();
                     if (isStale(version)) return;
-                    
-                    if (data.scheduled_blocks.length === 0) {
-                        scheduleDiv.innerHTML = '<p>No schedule available. Build a schedule first.</p>';
-                        return;
-                    }
-                    
-                    let html = '<table><tr><th>Start</th><th>End</th><th>Task</th><th>Freeze</th></tr>';
-                    data.scheduled_blocks.forEach(block => {
-                        let taskName = 'Unknown';
-                        if (block.entity_type === 'task' && data.task_titles && data.task_titles[block.entity_id]) {
-                            taskName = data.task_titles[block.entity_id];
-                        } else if (block.entity_type === 'transition') {
-                            taskName = 'Transition';
-                        } else {
-                            taskName = block.entity_id; // Fallback to ID if title not found
-                        }
-                        const checked = block.locked ? 'checked' : '';
-                        html += `<tr>
-                            <td>${new Date(block.start_time).toLocaleString()}</td>
-                            <td>${new Date(block.end_time).toLocaleString()}</td>
-                            <td>${taskName}</td>
-                            <td><input type="checkbox" ${checked} onchange="toggleFreeze('${block.id}', this.checked)"></td>
-                        </tr>`;
-                    });
-                    html += '</table>';
-                    
-                    if (data.overflow_tasks.length > 0) {
-                        html += `<p><strong>Overflow tasks (${data.overflow_tasks.length}):</strong></p><ul>`;
-                        data.overflow_tasks.forEach(task => {
-                            html += `<li>${task.title}</li>`;
-                        });
-                        html += '</ul>';
-                    }
-                    
-                    scheduleDiv.innerHTML = html;
+
+                    lastScheduleData = data;
+                    renderSchedule(data);
                 } catch (error) {
                     if (isStale(version)) return;
                     // Treat "no schedule" as a normal empty state, not an error.
@@ -3006,7 +3151,15 @@ async def build_schedule(
             )
 
         calendar_client = GoogleCalendarClient(credentials=creds, calendar_id="primary")
-        calendar_tz = calendar_client.get_calendar_timezone()
+        # Ensure timezone is a real IANA tz database identifier (defensive for tests/mocks).
+        calendar_tz_raw = calendar_client.get_calendar_timezone()
+        calendar_tz = "UTC"
+        try:
+            tz_candidate = str(calendar_tz_raw) if calendar_tz_raw else "UTC"
+            ZoneInfo(tz_candidate)  # validate
+            calendar_tz = tz_candidate
+        except Exception:
+            calendar_tz = "UTC"
 
         # Schedule window (must match both calendar query and scheduler inputs).
         # schedule_start / schedule_end were chosen above (also used for recurring task materialization).
@@ -3145,7 +3298,8 @@ async def build_schedule(
             scheduled_blocks=combined_blocks,
             overflow_tasks=schedule_result.overflow_tasks,
             start_time=schedule_result.start_time,
-            task_titles=task_titles
+            task_titles=task_titles,
+            time_zone=calendar_tz,
         )
     except HTTPException:
         raise
@@ -3177,7 +3331,8 @@ async def view_schedule(
         scheduled_blocks=blocks,
         overflow_tasks=[],
         start_time=None,
-        task_titles=task_titles
+        task_titles=task_titles,
+        time_zone=None,
     )
 
 
