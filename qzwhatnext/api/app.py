@@ -472,29 +472,11 @@ async def root():
             <div id="taskEditorPanel" style="margin-top: 12px; padding: 10px; border: 1px solid #e5e5e5; border-radius: 6px;">
                 <div class="row" style="align-items: end;">
                     <div class="wrap">
-                        <label for="editTaskId">Task editor</label>
-                        <input type="text" id="editTaskId" placeholder="Click a task above to load it, or paste a task id">
+                        <label>Task editor</label>
+                        <div class="muted">Click a task above to load it here.</div>
+                        <input type="hidden" id="editTaskId">
                     </div>
-                    <button type="button" onclick="loadTaskForEdit()">Load</button>
                     <button type="button" onclick="saveTaskEdits()">Save</button>
-                </div>
-
-                <div class="muted" style="margin-top: 8px;">
-                    Protected fields (read-only): id, user_id, source, created/updated, recurrence, ai_excluded.
-                </div>
-
-                <div class="row" style="margin-top: 8px;">
-                    <div class="wrap"><div class="muted">id</div><div id="editTaskIdRO" class="wrap"></div></div>
-                    <div class="wrap"><div class="muted">user_id</div><div id="editTaskUserIdRO" class="wrap"></div></div>
-                </div>
-                <div class="row" style="margin-top: 6px;">
-                    <div class="wrap"><div class="muted">source</div><div id="editTaskSourceRO" class="wrap"></div></div>
-                    <div class="wrap"><div class="muted">created_at</div><div id="editTaskCreatedAtRO" class="wrap"></div></div>
-                    <div class="wrap"><div class="muted">updated_at</div><div id="editTaskUpdatedAtRO" class="wrap"></div></div>
-                </div>
-                <div class="row" style="margin-top: 6px;">
-                    <div class="wrap"><div class="muted">recurrence</div><div id="editTaskRecurrenceRO" class="wrap"></div></div>
-                    <div class="wrap"><div class="muted">ai_excluded</div><div id="editTaskAiExcludedRO" class="wrap"></div></div>
                 </div>
 
                 <div class="row" style="margin-top: 10px;">
