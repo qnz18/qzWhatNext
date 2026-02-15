@@ -78,6 +78,16 @@ class TestTaskRepository:
         assert len(open_tasks) == 1
         assert open_tasks[0].title == "Open Task"
         assert open_tasks[0].status == TaskStatus.OPEN
+
+    def test_get_open_excludes_missed(self, task_repository, sample_task_base, test_user_id):
+        """Test that get_open() excludes missed tasks (habit roll-forward)."""
+        open_task = Task(**{**sample_task_base, "id": str(uuid.uuid4()), "title": "Open Task", "status": TaskStatus.OPEN})
+        missed_task = Task(**{**sample_task_base, "id": str(uuid.uuid4()), "title": "Missed Task", "status": TaskStatus.MISSED})
+        task_repository.create(open_task)
+        task_repository.create(missed_task)
+        open_tasks = task_repository.get_open(test_user_id)
+        assert len(open_tasks) == 1
+        assert open_tasks[0].status == TaskStatus.OPEN
     
     def test_update_task(self, task_repository, sample_task):
         """Test updating a task."""

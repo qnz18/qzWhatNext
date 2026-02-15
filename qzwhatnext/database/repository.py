@@ -60,14 +60,39 @@ class TaskRepository:
         return [task_db.to_pydantic() for task_db in tasks_db]
     
     def get_open(self, user_id: str) -> List[Task]:
-        """Get all open (non-completed) tasks for a user."""
+        """Get all open (non-completed, non-missed) tasks for a user."""
         tasks_db = self.db.query(TaskDB).filter(
             TaskDB.user_id == user_id,
             TaskDB.status == "open",
             TaskDB.deleted_at.is_(None),
         ).all()
         return [task_db.to_pydantic() for task_db in tasks_db]
-    
+
+    def get_open_tasks_for_recurrence_series(self, user_id: str, recurrence_series_id: str) -> List[Task]:
+        """Get open tasks that belong to a recurrence series (for habit: at most one expected)."""
+        tasks_db = self.db.query(TaskDB).filter(
+            TaskDB.user_id == user_id,
+            TaskDB.recurrence_series_id == recurrence_series_id,
+            TaskDB.status == "open",
+            TaskDB.deleted_at.is_(None),
+        ).all()
+        return [task_db.to_pydantic() for task_db in tasks_db]
+
+    def get_open_recurrence_tasks_with_window_before(self, user_id: str, before: datetime) -> List[Task]:
+        """Open recurrence tasks whose flexibility_window end is before the given time (past window)."""
+        tasks_db = self.db.query(TaskDB).filter(
+            TaskDB.user_id == user_id,
+            TaskDB.recurrence_series_id.isnot(None),
+            TaskDB.status == "open",
+            TaskDB.deleted_at.is_(None),
+        ).all()
+        out: List[Task] = []
+        for t in tasks_db:
+            p = t.to_pydantic()
+            if p.flexibility_window and p.flexibility_window[1] < before:
+                out.append(p)
+        return out
+
     def update(self, task: Task) -> Task:
         """Update an existing task (user_id must match task.user_id)."""
         task_db = self.db.query(TaskDB).filter(

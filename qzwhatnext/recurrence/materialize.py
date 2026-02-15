@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from qzwhatnext.database.recurring_task_series_repository import RecurringTaskSeriesRepository
 from qzwhatnext.database.repository import TaskRepository
 from qzwhatnext.models.recurrence import RecurrenceFrequency, RecurrencePreset, TimeOfDayWindow, Weekday
-from qzwhatnext.models.task import TaskCategory
+from qzwhatnext.models.task import TaskCategory, TaskStatus
 from qzwhatnext.models.task_factory import create_task_base
 
 
@@ -125,11 +125,22 @@ def materialize_recurring_tasks(
 ) -> int:
     """Create missing Task instances for recurring series within [window_start, window_end).
 
+    Default is habit (non-accumulating): at most one open occurrence per series; past-window
+    open occurrences are marked missed and we only materialize the next occurrence.
     Returns number of tasks created.
     """
     series_repo = RecurringTaskSeriesRepository(db)
     task_repo = TaskRepository(db)
     series_rows = series_repo.list_active(user_id)
+
+    # Habit roll-forward: mark open recurrence tasks whose window has passed as missed.
+    past_window = task_repo.get_open_recurrence_tasks_with_window_before(user_id, window_start)
+    now = datetime.utcnow()
+    for t in past_window:
+        try:
+            task_repo.update(t.model_copy(update={"status": TaskStatus.MISSED, "updated_at": now}))
+        except Exception:
+            continue
 
     created = 0
     start_day = window_start.date()
@@ -137,6 +148,10 @@ def materialize_recurring_tasks(
 
     for s in series_rows:
         p = RecurrencePreset.model_validate(s.recurrence_preset)
+
+        # Habit (non-accumulating): at most one open occurrence per series.
+        if task_repo.get_open_tasks_for_recurrence_series(user_id, s.id):
+            continue
 
         # If the series specifies "N times per week", we materialize N occurrences per week
         # inside the window by choosing N days deterministically.
@@ -156,7 +171,8 @@ def materialize_recurring_tasks(
                 year, week, _ = day.isocalendar()
                 week_map.setdefault((year, week), []).append(day)
 
-            for _, days in week_map.items():
+            # Habit: only the next occurrence (first week in window, first chosen day).
+            for _, days in sorted(week_map.items()):
                 days.sort()
                 chosen_days = _choose_n_days_in_week(days, int(p.count_per_period))
                 for day in chosen_days:
@@ -183,11 +199,12 @@ def materialize_recurring_tasks(
                         task_repo.create(task)
                         created += 1
                     except Exception:
-                        # Assume duplicates/constraint collisions mean it's already present; never crash scheduling.
-                        continue
+                        pass
+                    break  # habit: one occurrence per series
+                break  # habit: one occurrence per series
             continue
 
-        # Otherwise, use occurs-on-day evaluation.
+        # Otherwise, use occurs-on-day evaluation. Habit: only the next occurrence (first matching day).
         for day in _daterange(start_day, end_day):
             if not _occurs_on_day(p, day):
                 continue
@@ -214,7 +231,8 @@ def materialize_recurring_tasks(
                 task_repo.create(task)
                 created += 1
             except Exception:
-                continue
+                pass
+            break  # habit: one occurrence per series
 
     return created
 

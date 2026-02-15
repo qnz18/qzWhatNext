@@ -10,6 +10,7 @@ class TaskStatus(str, Enum):
     """Task status enumeration."""
     OPEN = "open"
     COMPLETED = "completed"
+    MISSED = "missed"  # Recurrence occurrence passed without completion (habit roll-forward)
 
 
 class TaskCategory(str, Enum):

@@ -819,7 +819,28 @@ Users expect schedule times to match what they see in Google Calendar; displayin
 **Decision:**  
 When creating a recurring task series from natural language, the system applies small **deterministic defaults** for common health habits so they are schedulable within tight time-of-day windows.\n\nCurrently:\n- Instructions containing “vitamin(s)” or “med(s)/medicine” default to:\n  - `category_default = health`\n  - `estimated_duration_min_default = 5`\n+
 **Rationale:**  \n+If these series default to `unknown` + 30 minutes, they often become low-tier and overflow after their morning window passes. These deterministic defaults improve schedulability without requiring the user to specify duration or category.\n+
-**Implications:**  \n+- Affects recurring task series created via `POST /capture`.\n+- AI exclusion rules still apply; this is deterministic and does not call AI.\n+**Status:** Draft (MVP)\n+\n+---\n+
+**Implications:**  \n+- Affects recurring task series created via `POST /capture`.\n+- AI exclusion rules still apply; this is deterministic and does not call AI.\n+**Status:** Draft (MVP)
+
+---
+
+## D-045 — Recurring Tasks Default: Habit (Non-Accumulating) (MVP)
+
+**Decision:**  
+Recurring task series default to **habit, non-accumulating** behavior: at most one open occurrence per series. When an occurrence’s time window has passed and it is still open, it is marked **missed** and the system rolls forward to the next occurrence (no growing backlog of open repeats).
+
+**Rationale:**  
+Users expect habits to be “do it once, then the next one” rather than a pile-up of overdue instances. Non-accumulating is the default to avoid surprise backlogs and to keep scheduling and task lists manageable.
+
+**Implications:**  
+- Task status gains a value: `missed` (recurrence occurrence passed without completion).
+- Scheduling and “open task” queries exclude `missed` (only `open` tasks are scheduled).
+- During materialization: (1) open recurrence tasks whose flexibility window has ended are updated to `missed`; (2) for each series, at most one open occurrence is kept—only the next occurrence is materialized when the series has none open.
+- Default applies to all recurring task series unless a future decision introduces an explicit “accumulating” option.
+
+**Status:** Draft (MVP)
+
+---
+
 ## Canonical Rule
 
 If a future behavior conflicts with a decision in this log:

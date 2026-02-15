@@ -112,7 +112,7 @@ A RecurringTaskSeries is a persisted template that generates Task instances with
 - updated_at: datetime
 - deleted_at: datetime | null
 
-Series materialization is deterministic and idempotent for a given horizon window: tasks are de-duped using `(user_id, recurrence_series_id, recurrence_occurrence_start)`.
+Series materialization is deterministic and idempotent for a given horizon window: tasks are de-duped using `(user_id, recurrence_series_id, recurrence_occurrence_start)`. The default is **habit (non-accumulating)**: at most one open occurrence per series; past-window open occurrences are marked `missed` and only the next occurrence is materialized (see decision D-045).
 
 ---
 

@@ -489,6 +489,7 @@ async def root():
                         <select id="editTaskStatus">
                             <option value="open" selected>open</option>
                             <option value="completed">completed</option>
+                            <option value="missed">missed</option>
                         </select>
                     </div>
                     <div class="wrap" style="min-width: 180px;">
