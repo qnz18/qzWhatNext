@@ -1,7 +1,7 @@
 """Repository for User database operations."""
 
 import logging
-from typing import Optional
+from typing import List, Optional
 from sqlalchemy.orm import Session
 
 from qzwhatnext.models.user import User
@@ -25,7 +25,12 @@ class UserRepository:
         """Get user by email."""
         user_db = self.db.query(UserDB).filter(UserDB.email == email).first()
         return user_db.to_pydantic() if user_db else None
-    
+
+    def list_all_user_ids(self) -> List[str]:
+        """Return all user primary keys (for internal batch jobs)."""
+        rows = self.db.query(UserDB.id).all()
+        return [r[0] for r in rows]
+
     def create_or_update(self, user: User) -> User:
         """Create or update user (upsert).
         

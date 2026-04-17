@@ -841,6 +841,26 @@ Users expect habits to be “do it once, then the next one” rather than a pile
 
 ---
 
+## D-046 — Automated Schedule Rebuild, Calendar Sync, and Internal Daily Job (MVP)
+
+**Decision:**  
+- After successful **task-changing API** operations (task CRUD including bulk, Sheets import, capture), the server runs **`best_effort_rebuild_and_sync`**: if Google Calendar is connected and there are **open tasks**, it runs **`POST /schedule`-equivalent logic** then **`POST /sync-calendar`-equivalent logic**; if there are **no open tasks**, it **skips rebuild** but may still **sync** for cleanup. Failures are **logged** and **never** fail the primary HTTP response.  
+- **`POST /sync-calendar`** succeeds when there are **zero** `ScheduledBlock` rows if Calendar is connected: it performs **orphaned managed-event deletion** over a **bounded window** derived from the configured schedule horizon (same padding policy as when blocks exist). The JSON response includes **`orphans_deleted`**.  
+- **`POST /internal/jobs/daily-schedule`** is an **internal batch endpoint** protected by **`QZ_INTERNAL_JOB_SECRET`** (header **`X-qzwhatnext-job-secret`**). If the env var is unset, the endpoint returns **404** (`Not found`). For each user with a stored Calendar refresh token: **rebuild+sync** when open tasks exist; otherwise **sync-only**. Intended to be invoked **once per day** by **Google Cloud Scheduler** (see `scripts/setup_cloud_scheduler_daily.sh` and `DEPLOYMENT.md`).  
+- Optional **`QZ_SCHEDULE_HORIZON_DAYS`** (`7` \| `14` \| `30`, default `7`) aligns horizon for rebuild, orphan scan, and sync when blocks are empty.
+
+**Rationale:**  
+Users should not rely on manual “Build schedule” / “Sync” clicks for routine maintenance; the engine spec already listed rebuild triggers—the implementation now matches. Empty-schedule sync cleanup prevents **stale managed calendar events** after tasks are cleared. A shared secret + Scheduler is **low-cost** on GCP and scales to multi-user by iterating all users.
+
+**Implications:**  
+- Cloud Run must set **`QZ_INTERNAL_JOB_SECRET`** (Secret Manager recommended).  
+- Scheduler job stores the same secret in an HTTP header (project admins can read it); **OIDC + `run.invoker`** remains a documented hardening path.  
+- Automation logs use **structured, compact** lines (user id, counts); do not log task titles for trust-sensitive paths.
+
+**Status:** Locked (MVP)
+
+---
+
 ## Canonical Rule
 
 If a future behavior conflicts with a decision in this log:

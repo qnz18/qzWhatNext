@@ -244,6 +244,8 @@ The MVP includes a simple custom UI for viewing and refining the schedule.
 - See immediate effect of parameter changes on the schedule
 - Changes trigger automatic schedule rebuild
 
+**Server-side automation (MVP):** Task lifecycle changes via the API (create, update, delete, restore, bulk variants, Sheets import, and capture flows that affect tasks) trigger a **best-effort** schedule rebuild and Google Calendar sync when Calendar is connected; failures are logged and do not fail the primary mutation. If there are **no open tasks**, rebuild is skipped but **sync may still run** to remove orphaned managed calendar events. A **daily secured job** (`POST /internal/jobs/daily-schedule`, triggered by Google Cloud Scheduler in production) processes all users with Calendar connected (rebuild+sync when tasks exist, otherwise sync-only cleanup).
+
 **User Control:**
 - Full control over all task parameters when necessary
 - All overrides are logged and reversible

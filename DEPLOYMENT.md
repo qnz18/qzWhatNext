@@ -110,6 +110,29 @@ gcloud run deploy qzwhatnext \
 
 Cloud Run will provide a URL after deployment.
 
+## Daily schedule job (Google Cloud Scheduler)
+
+qzWhatNext exposes **`POST /internal/jobs/daily-schedule`**, intended to run **once per day** (for example **05:00** in your IANA timezone) so schedules stay aligned without manual clicks.
+
+1. **Generate a secret** (example): `openssl rand -hex 32`
+2. **Set on Cloud Run** (same value every deploy): `QZ_INTERNAL_JOB_SECRET` — use Secret Manager in production and reference it from `--set-secrets` or `--update-secrets`.
+3. **Enable Cloud Scheduler API** and create a job that **HTTP POST**s to  
+   `https://<YOUR_CLOUD_RUN_HOST>/internal/jobs/daily-schedule`  
+   with header **`X-qzwhatnext-job-secret: <same secret>`**.  
+   Set **cron** (e.g. `0 5 * * *`) and **time zone** (e.g. `America/New_York`) in the Scheduler UI or CLI.  
+   **Job name:** Use any valid Cloud Scheduler job name you prefer (e.g. `daily_rebuild`). qzWhatNext does **not** read this name—it is only for you in the console and logs. Docs and `scripts/setup_cloud_scheduler_daily.sh` use **`qzwhatnext-daily-schedule`** as an example default when creating the job via `gcloud`; you do **not** need to rename an existing job to match.
+4. **Optional:** `QZ_SCHEDULE_HORIZON_DAYS` = `7`, `14`, or `30` (default `7`) on Cloud Run to widen the rebuild and orphan-cleanup window.
+
+**Script (recommended):** From a machine with `gcloud` authenticated, set `PROJECT_ID`, `REGION`, `SERVICE_URL`, and `QZ_INTERNAL_JOB_SECRET`, then run:
+
+```bash
+./scripts/setup_cloud_scheduler_daily.sh
+```
+
+See comments in the script for optional `JOB_NAME`, `SCHEDULE_CRON`, and `TIME_ZONE`. **Do not commit** the secret; prefer reading it from Secret Manager when invoking the script.
+
+**Hardening (optional):** If you later restrict Cloud Run to authenticated invokers, configure Scheduler **OIDC** with a service account that has **`roles/run.invoker`** and drop the shared header (requires a small product change to accept OIDC-only auth).
+
 ## Multi-User Authentication Setup
 
 qzWhatNext uses Google OAuth for user authentication. All API endpoints require Bearer token authentication.
@@ -159,6 +182,8 @@ Set these in your deployment:
 - `TOKEN_ENCRYPTION_KEY`: Fernet key used to encrypt stored OAuth refresh tokens at rest (store in Secret Manager)
 
 **Optional:**
+- `QZ_INTERNAL_JOB_SECRET`: Shared secret for **`POST /internal/jobs/daily-schedule`** (Cloud Scheduler); must match header `X-qzwhatnext-job-secret`. Omit in environments where the daily job is not used (endpoint returns 404).
+- `QZ_SCHEDULE_HORIZON_DAYS`: `7`, `14`, or `30` — schedule rebuild window and empty-schedule orphan scan (default `7`).
 - `JWT_ALGORITHM`: JWT algorithm (defaults to "HS256")
 - `JWT_EXPIRATION_HOURS`: Token expiration in hours (defaults to "24")
 - `GOOGLE_SHEETS_CREDENTIALS_PATH`: Path to OAuth2 credentials for Sheets API (legacy/local-dev flow)

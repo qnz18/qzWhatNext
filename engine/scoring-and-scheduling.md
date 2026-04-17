@@ -233,12 +233,13 @@ On each rebuild trigger, the engine executes:
 ## 5. Rebuild Triggers
 
 A full rebuild occurs when:
-- a task is added or imported
+- a task is added, updated, deleted, restored, purged, or imported (including bulk operations and capture flows that create or change tasks)
 - a task is completed
 - a task is snoozed or rescheduled
 - a user-created calendar event is added or changed (user-blocked time, manually scheduled events)
 - the user blocks or unblocks time
 - the engine detects schedule invalidation
+- a scheduled **daily batch job** runs (server-side safety net for drift and recurring materialization)
 
 **Note:** Calendar events created by the system do NOT trigger rebuilds. The system manages tasks first, then updates the calendar. Calendar events are output only in MVP.
 
@@ -254,6 +255,8 @@ Calendar sync is **idempotent** and **bidirectional** for qzWhatNext-managed eve
 - If the user changes date/time in Calendar, qzWhatNext sets the corresponding `ScheduledBlock.locked=true` (freeze) so future rebuilds do not move it unless explicitly unlocked.
 
 Calendar edits to managed events do **not** trigger automatic rebuilds (to avoid loops); they are applied during calendar sync.
+
+**Empty in-app schedule:** `POST /sync-calendar` is still valid when there are **no** `ScheduledBlock` rows. In that case the system does not create events from blocks, but it **does** scan Google Calendar over a **bounded horizon window** (aligned with the configured schedule horizon, with the same padding used when blocks exist) and **deletes orphaned qzWhatNext-managed events** (managed marker present, `block_id` not matching any persisted block). This prevents stale managed events after tasks are cleared.
 
 ---
 

@@ -4,7 +4,6 @@ import logging
 import os
 import uuid
 from datetime import datetime, timedelta, timezone, date, time
-from zoneinfo import ZoneInfo
 from typing import List, Optional, Dict, Tuple
 from urllib.parse import urlencode, urlparse, urlunparse
 
@@ -35,8 +34,6 @@ from qzwhatnext.integrations.google_calendar import (
     PRIVATE_KEY_TIME_BLOCK_ID,
 )
 from qzwhatnext.integrations.google_sheets import GoogleSheetsClient
-from qzwhatnext.engine.ranking import stack_rank
-from qzwhatnext.engine.scheduler import schedule_tasks, SchedulingResult
 from qzwhatnext.engine.inference import infer_category, generate_title, estimate_duration
 from qzwhatnext.database.database import get_db, init_db
 from qzwhatnext.database.repository import TaskRepository
@@ -58,6 +55,14 @@ from qzwhatnext.recurrence.interpret import interpret_capture_instruction
 from qzwhatnext.recurrence.deterministic_parser import RecurrenceParseError
 from qzwhatnext.recurrence.materialize import materialize_recurring_tasks
 from qzwhatnext.recurrence.rrule_export import preset_to_rrule
+from qzwhatnext.services.schedule_calendar import (
+    best_effort_rebuild_and_sync,
+    build_schedule_for_user,
+    config_schedule_horizon_days,
+    run_daily_schedule_job,
+    sync_calendar_for_user,
+    verify_internal_job_secret,
+)
 
 # Initialize logger
 logger = logging.getLogger(__name__)
@@ -379,6 +384,16 @@ class SyncResponse(BaseModel):
     """Response for calendar sync."""
     events_created: int
     event_ids: List[str]
+    orphans_deleted: int = 0
+
+
+class DailyJobResponse(BaseModel):
+    """Response for internal daily schedule job (Cloud Scheduler)."""
+
+    users_processed: int
+    rebuilds: int
+    syncs: int
+    errors: List[str] = Field(default_factory=list)
 
 
 class ScheduledBlockResponse(BaseModel):
@@ -2390,6 +2405,10 @@ async def capture(
 
     preset_json = parsed.preset.model_dump(mode="json") if parsed.preset is not None else None
 
+    def _capture_done(resp: CaptureResponse) -> CaptureResponse:
+        best_effort_rebuild_and_sync(db, current_user.id)
+        return resp
+
     def _next_date_for_weekly_start(d: date, by_weekday: list, *, max_days: int = 14) -> date:
         """Pick the next date on/after d matching by_weekday (Weekday enums)."""
         if not by_weekday:
@@ -2463,7 +2482,7 @@ async def capture(
             )
             if updated is None:
                 raise HTTPException(status_code=404, detail="Recurring task series not found")
-            return CaptureResponse(action="updated", entity_kind="task_series", entity_id=updated.id)
+            return _capture_done(CaptureResponse(action="updated", entity_kind="task_series", entity_id=updated.id))
 
         tb = time_block_repo.get(current_user.id, request.entity_id)
         if tb is not None:
@@ -2517,11 +2536,13 @@ async def capture(
             )
             if updated is None:
                 raise HTTPException(status_code=404, detail="Recurring time block not found")
-            return CaptureResponse(
-                action="updated",
-                entity_kind="time_block",
-                entity_id=updated.id,
-                calendar_event_id=updated.calendar_event_id,
+            return _capture_done(
+                CaptureResponse(
+                    action="updated",
+                    entity_kind="time_block",
+                    entity_id=updated.id,
+                    calendar_event_id=updated.calendar_event_id,
+                )
             )
 
         raise HTTPException(status_code=404, detail="Entity not found for update")
@@ -2540,7 +2561,9 @@ async def capture(
             ai_excluded=parsed.ai_excluded,
         )
         created_task = repo.create(task)
-        return CaptureResponse(action="created", entity_kind="task", entity_id=created_task.id, tasks_created=1)
+        return _capture_done(
+            CaptureResponse(action="created", entity_kind="task", entity_id=created_task.id, tasks_created=1)
+        )
 
     if parsed.entity_kind == "task_series":
         series_repo = RecurringTaskSeriesRepository(db)
@@ -2567,11 +2590,13 @@ async def capture(
             window_start=now,
             window_end=now + timedelta(days=7),
         )
-        return CaptureResponse(
-            action="created",
-            entity_kind="task_series",
-            entity_id=created_series.id,
-            tasks_created=tasks_created,
+        return _capture_done(
+            CaptureResponse(
+                action="created",
+                entity_kind="task_series",
+                entity_id=created_series.id,
+                tasks_created=tasks_created,
+            )
         )
 
     if parsed.entity_kind == "calendar_event":
@@ -2596,11 +2621,13 @@ async def capture(
         if not event_id:
             raise HTTPException(status_code=500, detail="Failed to create calendar event")
 
-        return CaptureResponse(
-            action="created",
-            entity_kind="calendar_event",
-            entity_id=event_id,
-            calendar_event_id=event_id,
+        return _capture_done(
+            CaptureResponse(
+                action="created",
+                entity_kind="calendar_event",
+                entity_id=event_id,
+                calendar_event_id=event_id,
+            )
         )
 
     # time_block (recurring)
@@ -2637,11 +2664,13 @@ async def capture(
         recurrence_preset=preset_json,
         calendar_event_id=event_id,
     )
-    return CaptureResponse(
-        action="created",
-        entity_kind="time_block",
-        entity_id=row.id,
-        calendar_event_id=row.calendar_event_id,
+    return _capture_done(
+        CaptureResponse(
+            action="created",
+            entity_kind="time_block",
+            entity_id=row.id,
+            calendar_event_id=row.calendar_event_id,
+        )
     )
 
 
@@ -2683,6 +2712,7 @@ async def create_task(
     
     try:
         created_task = repo.create(task)
+        best_effort_rebuild_and_sync(db, current_user.id)
         return TaskResponse(task=created_task)
     except Exception as e:
         logger.error(f"Failed to create task: {str(e)}")
@@ -2793,6 +2823,7 @@ async def add_smart_task(
     
     try:
         created_task = repo.create(task)
+        best_effort_rebuild_and_sync(db, current_user.id)
         return TaskResponse(task=created_task)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to create task: {str(e)}")
@@ -2803,10 +2834,10 @@ async def list_tasks(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """List all tasks for current user."""
+    """List open tasks for current user. Completed and missed tasks are excluded from the list."""
     repo = TaskRepository(db)
     try:
-        tasks = repo.get_all(current_user.id)
+        tasks = repo.get_open(current_user.id)
         return TaskListResponse(tasks=tasks, count=len(tasks))
     except Exception as e:
         logger.error(f"Failed to list tasks: {type(e).__name__}: {str(e)}")
@@ -2874,6 +2905,7 @@ async def update_task(
     
     try:
         updated_task = repo.update(task)
+        best_effort_rebuild_and_sync(db, current_user.id)
         return TaskResponse(task=updated_task)
     except ValueError as e:
         # ValueError from repository means task not found
@@ -2899,6 +2931,7 @@ async def delete_task(
 
     # Ensure schedule doesn't reference deleted tasks
     schedule_repo.delete_task_blocks(current_user.id, [task_id])
+    best_effort_rebuild_and_sync(db, current_user.id)
     return None
 
 
@@ -2918,6 +2951,7 @@ async def restore_task(
     task = repo.get(current_user.id, task_id)
     if not task:
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+    best_effort_rebuild_and_sync(db, current_user.id)
     return TaskResponse(task=task)
 
 
@@ -2936,6 +2970,7 @@ async def purge_task(
 
     # Ensure schedule doesn't reference deleted tasks
     schedule_repo.delete_task_blocks(current_user.id, [task_id])
+    best_effort_rebuild_and_sync(db, current_user.id)
     return None
 
 
@@ -2952,6 +2987,7 @@ async def bulk_delete_tasks(
     # Ensure schedule doesn't reference deleted tasks
     if result.get("affected_count", 0) > 0:
         schedule_repo.delete_task_blocks(current_user.id, request.task_ids)
+    best_effort_rebuild_and_sync(db, current_user.id)
     return BulkActionResponse(**result)
 
 
@@ -2964,6 +3000,7 @@ async def bulk_restore_tasks(
     """Restore multiple soft-deleted tasks."""
     repo = TaskRepository(db)
     result = repo.bulk_restore(current_user.id, request.task_ids)
+    best_effort_rebuild_and_sync(db, current_user.id)
     return BulkActionResponse(**result)
 
 
@@ -2980,6 +3017,7 @@ async def bulk_purge_tasks(
     # Ensure schedule doesn't reference deleted tasks
     if result.get("affected_count", 0) > 0:
         schedule_repo.delete_task_blocks(current_user.id, request.task_ids)
+    best_effort_rebuild_and_sync(db, current_user.id)
     return BulkActionResponse(**result)
 
 
@@ -3029,7 +3067,8 @@ async def import_from_sheets(
                 # Log error but continue with other tasks
                 logger.error(f"Error saving task '{task.title[:50]}': {type(e).__name__}: {str(e)}")
                 continue
-        
+
+        best_effort_rebuild_and_sync(db, current_user.id)
         return ImportSheetsResponse(
             imported_count=len(saved_tasks),
             tasks=saved_tasks,
@@ -3061,262 +3100,35 @@ async def import_from_sheets(
         )
 
 
+
 @app.post("/schedule", response_model=ScheduleResponse)
 async def build_schedule(
     horizon_days: int = Query(7, description="Schedule horizon in days (7/14/30; capped at 30)"),
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Build schedule from tasks in database."""
-    task_repo = TaskRepository(db)
-    schedule_repo = ScheduledBlockRepository(db)
-
-    # Schedule window (must match both calendar query and scheduler inputs).
-    schedule_start = datetime.utcnow()
-    horizon_days = int(horizon_days or 7)
-    if horizon_days not in (7, 14, 30):
-        raise HTTPException(status_code=400, detail="horizon_days must be one of: 7, 14, 30")
-    schedule_end = schedule_start + timedelta(days=min(horizon_days, 30))
-
-    # Materialize recurring series into concrete task instances within the horizon.
-    # Best-effort: never block scheduling if a series cannot be materialized.
-    try:
-        materialize_recurring_tasks(
-            db,
-            user_id=current_user.id,
-            window_start=schedule_start,
-            window_end=schedule_end,
-        )
-    except Exception:
-        pass
-
-    tasks = task_repo.get_open(current_user.id)
-
-    if not tasks:
-        raise HTTPException(status_code=400, detail="No tasks available. Create tasks first.")
-    
-    try:
-        # Scheduling requires Calendar connection so we can respect real availability.
-        token_repo = GoogleOAuthTokenRepository(db)
-        token_row = token_repo.get_google_calendar(current_user.id)
-        if not token_row:
-            raise HTTPException(
-                status_code=400,
-                detail="Google Calendar not connected. Connect via /auth/google/calendar/auth-url (or click Sync in the UI).",
-            )
-
-        client_id = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "").strip()
-        client_secret = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "").strip()
-        if not client_id or not client_secret:
-            raise HTTPException(status_code=500, detail="Google OAuth client is not configured")
-
-        refresh_token = decrypt_secret(token_row.refresh_token_encrypted)
-        scopes = token_row.scopes or ["https://www.googleapis.com/auth/calendar"]
-
-        creds = GoogleCredentials(
-            token=None,
-            refresh_token=refresh_token,
-            token_uri="https://oauth2.googleapis.com/token",
-            client_id=client_id,
-            client_secret=client_secret,
-            scopes=scopes,
-        )
-        try:
-            creds.refresh(GoogleAuthRequest())
-        except Exception as e:
-            logger.warning(f"Google Calendar refresh failed for user {current_user.id}: {type(e).__name__}: {str(e)}")
-            # If the refresh token is revoked/expired, clear it so the next schedule build forces reconnect.
-            msg = str(e).lower()
-            if "invalid_grant" in msg or "expired" in msg or "revoked" in msg:
-                try:
-                    token_repo.delete_google_calendar(current_user.id)
-                except Exception:
-                    pass
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "Google Calendar authorization expired or was revoked. "
-                    "Reconnect via /auth/google/calendar/auth-url (or click Sync in the UI)."
-                ),
-            )
-
-        calendar_client = GoogleCalendarClient(credentials=creds, calendar_id="primary")
-        # Ensure timezone is a real IANA tz database identifier (defensive for tests/mocks).
-        calendar_tz_raw = calendar_client.get_calendar_timezone()
-        calendar_tz = "UTC"
-        try:
-            tz_candidate = str(calendar_tz_raw) if calendar_tz_raw else "UTC"
-            ZoneInfo(tz_candidate)  # validate
-            calendar_tz = tz_candidate
-        except Exception:
-            calendar_tz = "UTC"
-
-        # Schedule window (must match both calendar query and scheduler inputs).
-        # schedule_start / schedule_end were chosen above (also used for recurring task materialization).
-
-        # Preserve locked blocks from prior schedule (frozen placements).
-        existing_blocks = schedule_repo.get_all(current_user.id)
-        locked_blocks = [b for b in existing_blocks if b.locked]
-        unlocked_blocks = [b for b in existing_blocks if not b.locked]
-
-        # Preserve calendar_event_id mappings across rebuild by reusing prior block IDs per-task.
-        # This prevents duplicate calendar events when schedule is rebuilt.
-        unlocked_by_task: Dict[str, List[ScheduledBlock]] = {}
-        for b in unlocked_blocks:
-            if b.entity_type == "task":
-                unlocked_by_task.setdefault(b.entity_id, []).append(b)
-        for tid in unlocked_by_task:
-            unlocked_by_task[tid].sort(key=lambda b: b.start_time)
-
-        # Compute reserved intervals (locked time is off-limits for new blocks).
-        reserved_intervals: List[Tuple[datetime, datetime]] = [(b.start_time, b.end_time) for b in locked_blocks]
-
-        # Add non-managed Calendar event windows as reserved time (privacy: time window only).
-        try:
-            events = calendar_client.list_events_in_range(
-                time_min_rfc3339=_to_rfc3339_z(schedule_start),
-                time_max_rfc3339=_to_rfc3339_z(schedule_end),
-                # Minimize data: only the fields needed to identify managed events and time windows.
-                fields="items(start,end,status,extendedProperties(private)),nextPageToken",
-            )
-            for ev in events:
-                priv = _event_private(ev)
-                if priv.get(PRIVATE_KEY_MANAGED) == "1":
-                    continue
-                interval = _event_time_window_utc_naive(ev)
-                if interval:
-                    reserved_intervals.append(interval)
-        except Exception:
-            # Best-effort: if availability fetch fails, do not schedule blindly.
-            # Return a clear error so the user can retry.
-            raise HTTPException(status_code=400, detail="Failed to read calendar availability. Try again.")
-
-        # Reduce per-task remaining duration by time already covered by locked blocks.
-        locked_minutes_by_task: Dict[str, int] = {}
-        for b in locked_blocks:
-            if b.entity_type == "task":
-                mins = int((b.end_time - b.start_time).total_seconds() // 60)
-                locked_minutes_by_task[b.entity_id] = locked_minutes_by_task.get(b.entity_id, 0) + max(mins, 0)
-
-        def _date_start_utc_naive(d: date, *, time_zone_id: str) -> datetime:
-            try:
-                tzinfo = ZoneInfo(time_zone_id)
-            except Exception:
-                tzinfo = ZoneInfo("UTC")
-            local_start = datetime.combine(d, time(0, 0, 0), tzinfo=tzinfo)
-            return local_start.astimezone(timezone.utc).replace(tzinfo=None)
-
-        # Apply start_after as a hard earliest-start constraint (within this schedule window).
-        # Represent it via flexibility_window so the scheduler can enforce it deterministically.
-        tasks_with_start_after: List[Task] = []
-        for t in tasks:
-            if getattr(t, "start_after", None) is None:
-                tasks_with_start_after.append(t)
-                continue
-
-            earliest = _date_start_utc_naive(t.start_after, time_zone_id=calendar_tz)
-            existing = getattr(t, "flexibility_window", None)
-            if existing:
-                try:
-                    ws, we = existing
-                except Exception:
-                    ws, we = None, None
-                if ws is not None:
-                    earliest = max(ws, earliest)
-                latest = we if we is not None else schedule_end
-                latest = min(latest, schedule_end)
-            else:
-                latest = schedule_end
-
-            tasks_with_start_after.append(t.model_copy(update={"flexibility_window": (earliest, latest)}))
-
-        # Stack rank tasks (tier first, then urgency within tier).
-        ranked_tasks = stack_rank(tasks_with_start_after, now=schedule_start, time_zone=calendar_tz)
-
-        # Schedule remaining work around locked placements.
-        schedulable_tasks: List[Task] = []
-        for t in ranked_tasks:
-            consumed = locked_minutes_by_task.get(t.id, 0)
-            remaining = max(int(t.estimated_duration_min) - consumed, 0)
-            if remaining <= 0:
-                continue
-            schedulable_tasks.append(t.model_copy(update={"estimated_duration_min": remaining}))
-
-        schedule_result = schedule_tasks(
-            schedulable_tasks,
-            start_time=schedule_start,
-            end_time=schedule_end,
-            reserved_intervals=reserved_intervals,
-        )
-
-        # Reuse unlocked block IDs + calendar sync metadata where possible (per task, by block order).
-        adjusted_blocks: List[ScheduledBlock] = []
-        new_by_task: Dict[str, List[ScheduledBlock]] = {}
-        for b in schedule_result.scheduled_blocks:
-            if b.entity_type == "task":
-                new_by_task.setdefault(b.entity_id, []).append(b)
-            else:
-                adjusted_blocks.append(b)
-        for tid in new_by_task:
-            new_by_task[tid].sort(key=lambda b: b.start_time)
-            prior = unlocked_by_task.get(tid, [])
-            for i, b in enumerate(new_by_task[tid]):
-                if i < len(prior):
-                    old = prior[i]
-                    b = b.model_copy(
-                        update={
-                            "id": old.id,
-                            "calendar_event_id": old.calendar_event_id,
-                            "calendar_event_etag": getattr(old, "calendar_event_etag", None),
-                            "calendar_event_updated_at": getattr(old, "calendar_event_updated_at", None),
-                        }
-                    )
-                adjusted_blocks.append(b)
-        schedule_result.scheduled_blocks = adjusted_blocks
-
-        # Store schedule in database (preserve locked, replace unlocked)
-        schedule_repo.delete_unlocked_for_user(current_user.id)
-        schedule_repo.create_batch(schedule_result.scheduled_blocks)
-
-        # Combined view: locked blocks + newly scheduled blocks
-        combined_blocks = sorted(locked_blocks + schedule_result.scheduled_blocks, key=lambda b: b.start_time)
-        
-        # Build task titles map for frontend lookup
-        task_titles = _build_task_titles_dict(tasks, combined_blocks)
-        
-        return ScheduleResponse(
-            scheduled_blocks=combined_blocks,
-            overflow_tasks=schedule_result.overflow_tasks,
-            start_time=schedule_result.start_time,
-            task_titles=task_titles,
-            time_zone=calendar_tz,
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to build schedule: {type(e).__name__}: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to build schedule: {str(e)}")
+    data = build_schedule_for_user(db, current_user.id, horizon_days)
+    return ScheduleResponse(**data)
 
 
 @app.get("/schedule", response_model=ScheduleResponse)
 async def view_schedule(
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """View current schedule for user."""
     schedule_repo = ScheduledBlockRepository(db)
     task_repo = TaskRepository(db)
-    
+
     blocks = schedule_repo.get_all(current_user.id)
-    
+
     if not blocks:
         raise HTTPException(status_code=404, detail="No schedule available. Build a schedule first.")
-    
+
     tasks = task_repo.get_all(current_user.id)
     task_titles = _build_task_titles_dict(tasks, blocks)
-    
-    # For MVP, overflow_tasks and start_time are not stored in DB
-    # Return empty overflow and None start_time
+
     return ScheduleResponse(
         scheduled_blocks=blocks,
         overflow_tasks=[],
@@ -3329,303 +3141,20 @@ async def view_schedule(
 @app.post("/sync-calendar", response_model=SyncResponse)
 async def sync_calendar(
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Sync schedule to Google Calendar."""
-    schedule_repo = ScheduledBlockRepository(db)
-    task_repo = TaskRepository(db)
-    
-    blocks = schedule_repo.get_all(current_user.id)
-    
-    if not blocks:
-        raise HTTPException(status_code=400, detail="No schedule available. Build a schedule first.")
-    
-    try:
-        token_repo = GoogleOAuthTokenRepository(db)
-        token_row = token_repo.get_google_calendar(current_user.id)
-        if not token_row:
-            raise HTTPException(
-                status_code=400,
-                detail="Google Calendar not connected. Connect via /auth/google/calendar/auth-url (or click Sync in the UI).",
-            )
+    h = config_schedule_horizon_days()
+    data = sync_calendar_for_user(db, current_user.id, h)
+    return SyncResponse(**data)
 
-        client_id = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "").strip()
-        client_secret = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "").strip()
-        if not client_id or not client_secret:
-            raise HTTPException(status_code=500, detail="Google OAuth client is not configured")
 
-        refresh_token = decrypt_secret(token_row.refresh_token_encrypted)
-        scopes = token_row.scopes or ["https://www.googleapis.com/auth/calendar"]
-
-        creds = GoogleCredentials(
-            token=None,
-            refresh_token=refresh_token,
-            token_uri="https://oauth2.googleapis.com/token",
-            client_id=client_id,
-            client_secret=client_secret,
-            scopes=scopes,
-        )
-        try:
-            creds.refresh(GoogleAuthRequest())
-        except Exception as e:
-            logger.warning(f"Google Calendar refresh failed for user {current_user.id}: {type(e).__name__}: {str(e)}")
-            # If the refresh token is revoked/expired, clear it so the next sync forces reconnect.
-            msg = str(e).lower()
-            if "invalid_grant" in msg or "expired" in msg or "revoked" in msg:
-                try:
-                    token_repo.delete_google_calendar(current_user.id)
-                except Exception:
-                    # Best effort; never hide the original auth failure.
-                    pass
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "Google Calendar authorization expired or was revoked. "
-                    "Reconnect via /auth/google/calendar/auth-url (or click Sync in the UI)."
-                ),
-            )
-
-        calendar_client = GoogleCalendarClient(credentials=creds, calendar_id="primary")
-        tasks = task_repo.get_all(current_user.id)
-        tasks_dict = {task.id: task for task in tasks}
-        current_block_ids = {b.id for b in blocks}
-        
-        def _is_managed_event_for_block(event: dict, block_id: str) -> bool:
-            priv = _event_private(event)
-            return priv.get(PRIVATE_KEY_MANAGED) == "1" and priv.get(PRIVATE_KEY_BLOCK_ID) == block_id
-
-        def _needs_patch(event: dict, *, desired: dict) -> bool:
-            # Compare only the fields we own (summary, description, start/end, private keys).
-            if (event.get("summary") or "") != (desired.get("summary") or ""):
-                return True
-            if (event.get("description") or "") != (desired.get("description") or ""):
-                return True
-            ev_start = (event.get("start") or {}).get("dateTime")
-            ev_end = (event.get("end") or {}).get("dateTime")
-            d_start = (desired.get("start") or {}).get("dateTime")
-            d_end = (desired.get("end") or {}).get("dateTime")
-            if (ev_start or "") != (d_start or "") or (ev_end or "") != (d_end or ""):
-                return True
-            ev_priv = _event_private(event)
-            d_priv = ((desired.get("extendedProperties") or {}).get("private") or {})
-            for k in (PRIVATE_KEY_TASK_ID, PRIVATE_KEY_BLOCK_ID, PRIVATE_KEY_MANAGED):
-                if (ev_priv.get(k) or "") != (d_priv.get(k) or ""):
-                    return True
-            return False
-
-        events_created = 0
-        event_ids: List[str] = []
-
-        schedule_repo = ScheduledBlockRepository(db)
-
-        # Cleanup: delete orphaned qzWhatNext-managed events within the schedule window.
-        try:
-            starts = [b.start_time for b in blocks if b.start_time]
-            ends = [b.end_time for b in blocks if b.end_time]
-            if starts and ends:
-                from datetime import timedelta
-
-                window_start = min(starts) - timedelta(days=2)
-                window_end = max(ends) + timedelta(days=2)
-
-                for ev in calendar_client.list_events_in_range(
-                    time_min_rfc3339=_to_rfc3339_z(window_start),
-                    time_max_rfc3339=_to_rfc3339_z(window_end),
-                ):
-                    priv = ((ev.get("extendedProperties") or {}).get("private") or {})
-                    if priv.get(PRIVATE_KEY_MANAGED) != "1":
-                        continue
-                    ev_block_id = priv.get(PRIVATE_KEY_BLOCK_ID)
-                    if not ev_block_id or ev_block_id in current_block_ids:
-                        continue
-                    ev_id = ev.get("id")
-                    if ev_id:
-                        calendar_client.delete_event(ev_id)
-        except Exception:
-            # Best-effort cleanup; never block sync.
-            pass
-
-        for block in blocks:
-            if block.entity_type != "task":
-                continue
-
-            task = tasks_dict.get(block.entity_id)
-            if task is None:
-                continue
-
-            try:
-                event = None
-                event_id = block.calendar_event_id
-
-                # 1) Prefer direct lookup by persisted event id
-                if event_id:
-                    event = calendar_client.get_event(event_id)
-                    # If the event was deleted in Google Calendar, treat as missing so we recreate it.
-                    if event is None or (isinstance(event, dict) and event.get("status") == "cancelled"):
-                        # Event missing (deleted). Clear mapping so we can recreate.
-                        schedule_repo.update_calendar_sync_metadata(
-                            current_user.id,
-                            block.id,
-                            calendar_event_id=None,
-                            calendar_event_etag=None,
-                            calendar_event_updated_at=None,
-                        )
-                        event_id = None
-                        event = None
-
-                # 2) Fallback: find existing event by private block id (legacy / adopted)
-                if event is None and not event_id:
-                    event = calendar_client.find_event_by_block_id(block.id)
-                    if event is not None:
-                        # Defensive: only accept if it actually carries our block marker.
-                        priv = _event_private(event)
-                        if priv.get(PRIVATE_KEY_BLOCK_ID) == block.id:
-                            event_id = event.get("id")
-                        else:
-                            event = None
-                            event_id = None
-
-                # 3) Create if missing
-                if event is None:
-                    created = calendar_client.create_event_from_block(block, task)
-                    event_id = created.get("id")
-                    events_created += 1
-                    if event_id:
-                        event_ids.append(event_id)
-                    schedule_repo.update_calendar_sync_metadata(
-                        current_user.id,
-                        block.id,
-                        calendar_event_id=event_id,
-                        calendar_event_etag=created.get("etag"),
-                        calendar_event_updated_at=_to_utc_naive(_parse_rfc3339(created.get("updated"))),
-                    )
-                    continue
-
-                if not event_id:
-                    # Shouldn't happen, but never touch unknown ids.
-                    continue
-
-                # 4) Adopt legacy event by adding managed marker (if it looks like ours).
-                priv = _event_private(event)
-                if priv.get(PRIVATE_KEY_BLOCK_ID) == block.id and priv.get(PRIVATE_KEY_MANAGED) != "1":
-                    patch_body = {
-                        "extendedProperties": {
-                            "private": {
-                                PRIVATE_KEY_TASK_ID: block.entity_id,
-                                PRIVATE_KEY_BLOCK_ID: block.id,
-                                PRIVATE_KEY_MANAGED: "1",
-                            }
-                        }
-                    }
-                    event = calendar_client.patch_event(event_id, patch_body)
-
-                # Safety: only update events proven managed for this block.
-                if not _is_managed_event_for_block(event, block.id):
-                    continue
-
-                # Always persist event id mapping if found.
-                if block.calendar_event_id != event_id:
-                    schedule_repo.update_calendar_sync_metadata(
-                        current_user.id,
-                        block.id,
-                        calendar_event_id=event_id,
-                    )
-
-                event_etag = event.get("etag")
-                event_updated_at = _to_utc_naive(_parse_rfc3339(event.get("updated")))
-
-                has_baseline = bool(block.calendar_event_etag or block.calendar_event_updated_at)
-                calendar_changed = has_baseline and (
-                    (block.calendar_event_etag or "") != (event_etag or "")
-                    or (block.calendar_event_updated_at != event_updated_at)
-                )
-
-                if not has_baseline:
-                    # First time we see this event with no stored calendar version metadata.
-                    # Record baseline, but do NOT treat it as a user calendar edit.
-                    schedule_repo.update_calendar_sync_metadata(
-                        current_user.id,
-                        block.id,
-                        calendar_event_id=event_id,
-                        calendar_event_etag=event_etag,
-                        calendar_event_updated_at=event_updated_at,
-                    )
-
-                if calendar_changed:
-                    # Import calendar time into qzWhatNext and lock if time changed.
-                    start_str = (event.get("start") or {}).get("dateTime")
-                    end_str = (event.get("end") or {}).get("dateTime")
-                    if start_str and end_str:
-                        ev_start = _to_utc_naive(_parse_rfc3339(start_str))
-                        ev_end = _to_utc_naive(_parse_rfc3339(end_str))
-                        if ev_start and ev_end:
-                            time_changed = ev_start != block.start_time or ev_end != block.end_time
-                            schedule_repo.update_times_and_lock(
-                                current_user.id,
-                                block.id,
-                                start_time=ev_start,
-                                end_time=ev_end,
-                                lock=time_changed,
-                            )
-                    # Import title/notes from Calendar to prevent overwriting user edits.
-                    ev_title = event.get("summary")
-                    ev_notes = event.get("description")
-                    if (ev_title is not None and ev_title != task.title) or (ev_notes is not None and ev_notes != task.notes):
-                        existing = task_repo.get(current_user.id, task.id)
-                        if existing is not None:
-                            updated_task = existing.model_copy(
-                                update={
-                                    "title": ev_title if ev_title is not None else existing.title,
-                                    "notes": ev_notes if ev_notes is not None else existing.notes,
-                                    "updated_at": datetime.utcnow(),
-                                }
-                            )
-                            task_repo.update(updated_task)
-                    schedule_repo.update_calendar_sync_metadata(
-                        current_user.id,
-                        block.id,
-                        calendar_event_id=event_id,
-                        calendar_event_etag=event_etag,
-                        calendar_event_updated_at=event_updated_at,
-                    )
-                    continue
-
-                # No calendar-side edits since last sync: push app state if needed.
-                desired = {
-                    "summary": task.title,
-                    "description": task.notes,
-                    "start": {"dateTime": block.start_time.isoformat(), "timeZone": "UTC"},
-                    "end": {"dateTime": block.end_time.isoformat(), "timeZone": "UTC"},
-                    "extendedProperties": {
-                        "private": {
-                            PRIVATE_KEY_TASK_ID: block.entity_id,
-                            PRIVATE_KEY_BLOCK_ID: block.id,
-                            PRIVATE_KEY_MANAGED: "1",
-                        }
-                    },
-                }
-                if _needs_patch(event, desired=desired):
-                    updated = calendar_client.patch_event(event_id, desired)
-                    schedule_repo.update_calendar_sync_metadata(
-                        current_user.id,
-                        block.id,
-                        calendar_event_id=event_id,
-                        calendar_event_etag=updated.get("etag"),
-                        calendar_event_updated_at=_to_utc_naive(_parse_rfc3339(updated.get("updated"))),
-                    )
-
-            except Exception as e:
-                logger.error(
-                    f"Failed to sync calendar event for block {block.id}: {type(e).__name__}: {str(e)}"
-                )
-                continue
-
-        return SyncResponse(events_created=events_created, event_ids=event_ids)
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to sync calendar: {type(e).__name__}: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to sync calendar: {str(e)}")
+@app.post("/internal/jobs/daily-schedule", response_model=DailyJobResponse)
+async def daily_schedule_internal(request: Request, db: Session = Depends(get_db)):
+    """Secured batch job: rebuild+sync (or sync-only) for all users with Calendar connected."""
+    verify_internal_job_secret(request)
+    result = run_daily_schedule_job(db)
+    return DailyJobResponse(**result)
 
 
 @app.post("/schedule/blocks/{block_id}/lock", response_model=ScheduledBlockResponse)

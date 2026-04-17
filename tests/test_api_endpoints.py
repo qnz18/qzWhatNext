@@ -38,11 +38,11 @@ def _connect_google_calendar(test_client: TestClient) -> None:
 
 def _post_schedule_with_calendar(test_client: TestClient, *, events: Optional[List[Dict]] = None, horizon_days: int = 7):
     """POST /schedule with Calendar mocks (no network)."""
-    with patch("qzwhatnext.api.app.GoogleCredentials.refresh", return_value=None), patch(
+    with patch("qzwhatnext.services.schedule_calendar.GoogleCredentials.refresh", return_value=None), patch(
         "qzwhatnext.integrations.google_calendar.build",
         return_value=MagicMock(),
     ), patch(
-        "qzwhatnext.api.app.GoogleCalendarClient.list_events_in_range",
+        "qzwhatnext.services.schedule_calendar.GoogleCalendarClient.list_events_in_range",
         return_value=(events or []),
     ):
         return test_client.post("/schedule", params={"horizon_days": horizon_days})
@@ -374,17 +374,17 @@ class TestCaptureEndpoint:
     def test_capture_creates_and_updates_recurring_time_block(self, test_client):
         _connect_google_calendar(test_client)
 
-        with patch("qzwhatnext.api.app.GoogleCredentials.refresh", return_value=None), patch(
+        with patch("qzwhatnext.services.schedule_calendar.GoogleCredentials.refresh", return_value=None), patch(
             "qzwhatnext.integrations.google_calendar.build",
             return_value=MagicMock(),
         ), patch(
-            "qzwhatnext.api.app.GoogleCalendarClient.get_calendar_timezone",
+            "qzwhatnext.services.schedule_calendar.GoogleCalendarClient.get_calendar_timezone",
             return_value="UTC",
         ), patch(
-            "qzwhatnext.api.app.GoogleCalendarClient.create_recurring_time_block_event",
+            "qzwhatnext.services.schedule_calendar.GoogleCalendarClient.create_recurring_time_block_event",
             return_value={"id": "evt_tb_1"},
         ), patch(
-            "qzwhatnext.api.app.GoogleCalendarClient.patch_event",
+            "qzwhatnext.services.schedule_calendar.GoogleCalendarClient.patch_event",
             return_value={"id": "evt_tb_1"},
         ):
             create = test_client.post("/capture", json={"instruction": "kids practice tues at 4:30"})
@@ -407,14 +407,14 @@ class TestCaptureEndpoint:
     def test_capture_weekday_time_without_at_becomes_time_block(self, test_client):
         _connect_google_calendar(test_client)
 
-        with patch("qzwhatnext.api.app.GoogleCredentials.refresh", return_value=None), patch(
+        with patch("qzwhatnext.services.schedule_calendar.GoogleCredentials.refresh", return_value=None), patch(
             "qzwhatnext.integrations.google_calendar.build",
             return_value=MagicMock(),
         ), patch(
-            "qzwhatnext.api.app.GoogleCalendarClient.get_calendar_timezone",
+            "qzwhatnext.services.schedule_calendar.GoogleCalendarClient.get_calendar_timezone",
             return_value="UTC",
         ), patch(
-            "qzwhatnext.api.app.GoogleCalendarClient.create_recurring_time_block_event",
+            "qzwhatnext.services.schedule_calendar.GoogleCalendarClient.create_recurring_time_block_event",
             return_value={"id": "evt_tb_2"},
         ):
             r = test_client.post("/capture", json={"instruction": "bike ride tues and thurs 2:30pm"})
@@ -436,16 +436,16 @@ class TestCaptureEndpoint:
                 return _dt(2026, 1, 26, 12, 0, 0)
 
         with patch("qzwhatnext.api.app.datetime", _FixedDateTime), patch(
-            "qzwhatnext.api.app.GoogleCredentials.refresh",
+            "qzwhatnext.services.schedule_calendar.GoogleCredentials.refresh",
             return_value=None,
         ), patch(
             "qzwhatnext.integrations.google_calendar.build",
             return_value=MagicMock(),
         ), patch(
-            "qzwhatnext.api.app.GoogleCalendarClient.get_calendar_timezone",
+            "qzwhatnext.services.schedule_calendar.GoogleCalendarClient.get_calendar_timezone",
             return_value="UTC",
         ), patch(
-            "qzwhatnext.api.app.GoogleCalendarClient.create_time_block_event",
+            "qzwhatnext.services.schedule_calendar.GoogleCalendarClient.create_time_block_event",
             return_value={"id": "evt_oneoff_1"},
         ):
             r = test_client.post("/capture", json={"instruction": "bike ride next tues 2:30pm"})
@@ -538,17 +538,17 @@ class TestScheduleEndpoints:
             def utcnow(cls):
                 return fixed_now
 
-        with patch("qzwhatnext.api.app.datetime", _FixedDateTime), patch(
-            "qzwhatnext.api.app.GoogleCredentials.refresh",
+        with patch("qzwhatnext.services.schedule_calendar.datetime", _FixedDateTime), patch(
+            "qzwhatnext.services.schedule_calendar.GoogleCredentials.refresh",
             return_value=None,
         ), patch(
             "qzwhatnext.integrations.google_calendar.build",
             return_value=MagicMock(),
         ), patch(
-            "qzwhatnext.api.app.GoogleCalendarClient.get_calendar_timezone",
+            "qzwhatnext.services.schedule_calendar.GoogleCalendarClient.get_calendar_timezone",
             return_value="UTC",
         ), patch(
-            "qzwhatnext.api.app.GoogleCalendarClient.list_events_in_range",
+            "qzwhatnext.services.schedule_calendar.GoogleCalendarClient.list_events_in_range",
             return_value=[],
         ) as list_mock:
             resp = test_client.post("/schedule", params={"horizon_days": 14})
@@ -682,11 +682,11 @@ class TestGoogleCalendarSync:
         assert build.status_code == 200
 
         # Mock credential refresh and Calendar client behavior to avoid network.
-        with patch("qzwhatnext.api.app.GoogleCredentials.refresh", return_value=None), patch(
+        with patch("qzwhatnext.services.schedule_calendar.GoogleCredentials.refresh", return_value=None), patch(
             "qzwhatnext.integrations.google_calendar.build",
             return_value=MagicMock(),
         ), patch(
-            "qzwhatnext.api.app.GoogleCalendarClient.create_event_from_block",
+            "qzwhatnext.services.schedule_calendar.GoogleCalendarClient.create_event_from_block",
             return_value={"id": "evt_123", "etag": "etag_1", "updated": "2026-01-26T00:00:00Z"},
         ):
             sync = test_client.post("/sync-calendar")
@@ -704,14 +704,14 @@ class TestGoogleCalendarSync:
         assert build.status_code == 200
 
         # First run creates.
-        with patch("qzwhatnext.api.app.GoogleCredentials.refresh", return_value=None), patch(
+        with patch("qzwhatnext.services.schedule_calendar.GoogleCredentials.refresh", return_value=None), patch(
             "qzwhatnext.integrations.google_calendar.build",
             return_value=MagicMock(),
         ), patch(
-            "qzwhatnext.api.app.GoogleCalendarClient.list_events_in_range",
+            "qzwhatnext.services.schedule_calendar.GoogleCalendarClient.list_events_in_range",
             return_value=[],
         ), patch(
-            "qzwhatnext.api.app.GoogleCalendarClient.create_event_from_block",
+            "qzwhatnext.services.schedule_calendar.GoogleCalendarClient.create_event_from_block",
             return_value={"id": "evt_abc", "etag": "etag_a", "updated": "2026-01-26T00:00:00Z"},
         ) as create_mock:
             sync1 = test_client.post("/sync-calendar")
@@ -719,14 +719,14 @@ class TestGoogleCalendarSync:
             assert create_mock.call_count >= 1
 
         # Second run should not call create again (it should use persisted calendar_event_id + get_event).
-        with patch("qzwhatnext.api.app.GoogleCredentials.refresh", return_value=None), patch(
+        with patch("qzwhatnext.services.schedule_calendar.GoogleCredentials.refresh", return_value=None), patch(
             "qzwhatnext.integrations.google_calendar.build",
             return_value=MagicMock(),
         ), patch(
-            "qzwhatnext.api.app.GoogleCalendarClient.list_events_in_range",
+            "qzwhatnext.services.schedule_calendar.GoogleCalendarClient.list_events_in_range",
             return_value=[],
         ), patch(
-            "qzwhatnext.api.app.GoogleCalendarClient.get_event",
+            "qzwhatnext.services.schedule_calendar.GoogleCalendarClient.get_event",
             return_value={
                 "id": "evt_abc",
                 "etag": "etag_a",
@@ -738,7 +738,7 @@ class TestGoogleCalendarSync:
                 "extendedProperties": {"private": {"qzwhatnext_task_id": "x", "qzwhatnext_block_id": "y", "qzwhatnext_managed": "1"}},
             },
         ), patch(
-            "qzwhatnext.api.app.GoogleCalendarClient.create_event_from_block",
+            "qzwhatnext.services.schedule_calendar.GoogleCalendarClient.create_event_from_block",
         ) as create_mock2:
             sync2 = test_client.post("/sync-calendar")
             assert sync2.status_code == 200
@@ -764,22 +764,22 @@ class TestGoogleCalendarSync:
         # simplest here: call unlock endpoint later to verify lock state.
 
         # First sync creates and stores metadata.
-        with patch("qzwhatnext.api.app.GoogleCredentials.refresh", return_value=None), patch(
+        with patch("qzwhatnext.services.schedule_calendar.GoogleCredentials.refresh", return_value=None), patch(
             "qzwhatnext.integrations.google_calendar.build",
             return_value=MagicMock(),
         ), patch(
-            "qzwhatnext.api.app.GoogleCalendarClient.create_event_from_block",
+            "qzwhatnext.services.schedule_calendar.GoogleCalendarClient.create_event_from_block",
             return_value={"id": "evt_lock", "etag": "etag_0", "updated": "2026-01-26T00:00:00Z"},
         ):
             sync1 = test_client.post("/sync-calendar")
             assert sync1.status_code == 200
 
         # Second sync sees a changed etag + updated + time and should lock the block.
-        with patch("qzwhatnext.api.app.GoogleCredentials.refresh", return_value=None), patch(
+        with patch("qzwhatnext.services.schedule_calendar.GoogleCredentials.refresh", return_value=None), patch(
             "qzwhatnext.integrations.google_calendar.build",
             return_value=MagicMock(),
         ), patch(
-            "qzwhatnext.api.app.GoogleCalendarClient.get_event",
+            "qzwhatnext.services.schedule_calendar.GoogleCalendarClient.get_event",
             return_value={
                 "id": "evt_lock",
                 "etag": "etag_1",
@@ -827,7 +827,7 @@ class TestGoogleCalendarSync:
 
         # First sync: refresh fails with invalid_grant and should clear stored token row.
         with patch(
-            "qzwhatnext.api.app.GoogleCredentials.refresh",
+            "qzwhatnext.services.schedule_calendar.GoogleCredentials.refresh",
             side_effect=Exception("invalid_grant: Token has been expired or revoked."),
         ):
             sync1 = test_client.post("/sync-calendar")
@@ -851,14 +851,14 @@ class TestGoogleCalendarSync:
         block1_id = block1["id"]
 
         # First sync creates event and persists mapping.
-        with patch("qzwhatnext.api.app.GoogleCredentials.refresh", return_value=None), patch(
+        with patch("qzwhatnext.services.schedule_calendar.GoogleCredentials.refresh", return_value=None), patch(
             "qzwhatnext.integrations.google_calendar.build",
             return_value=MagicMock(),
         ), patch(
-            "qzwhatnext.api.app.GoogleCalendarClient.list_events_in_range",
+            "qzwhatnext.services.schedule_calendar.GoogleCalendarClient.list_events_in_range",
             return_value=[],
         ), patch(
-            "qzwhatnext.api.app.GoogleCalendarClient.create_event_from_block",
+            "qzwhatnext.services.schedule_calendar.GoogleCalendarClient.create_event_from_block",
             return_value={"id": "evt_rebuild", "etag": "etag_r1", "updated": "2026-01-26T00:00:00Z"},
         ) as create_mock:
             sync1 = test_client.post("/sync-calendar")
@@ -872,14 +872,14 @@ class TestGoogleCalendarSync:
         assert block2["id"] == block1_id
 
         # Second sync should not create a new event.
-        with patch("qzwhatnext.api.app.GoogleCredentials.refresh", return_value=None), patch(
+        with patch("qzwhatnext.services.schedule_calendar.GoogleCredentials.refresh", return_value=None), patch(
             "qzwhatnext.integrations.google_calendar.build",
             return_value=MagicMock(),
         ), patch(
-            "qzwhatnext.api.app.GoogleCalendarClient.list_events_in_range",
+            "qzwhatnext.services.schedule_calendar.GoogleCalendarClient.list_events_in_range",
             return_value=[],
         ), patch(
-            "qzwhatnext.api.app.GoogleCalendarClient.get_event",
+            "qzwhatnext.services.schedule_calendar.GoogleCalendarClient.get_event",
             return_value={
                 "id": "evt_rebuild",
                 "etag": "etag_r1",
@@ -891,7 +891,7 @@ class TestGoogleCalendarSync:
                 "extendedProperties": {"private": {"qzwhatnext_task_id": block2["entity_id"], "qzwhatnext_block_id": block2["id"], "qzwhatnext_managed": "1"}},
             },
         ), patch(
-            "qzwhatnext.api.app.GoogleCalendarClient.create_event_from_block",
+            "qzwhatnext.services.schedule_calendar.GoogleCalendarClient.create_event_from_block",
         ) as create_mock2:
             sync2 = test_client.post("/sync-calendar")
             assert sync2.status_code == 200
@@ -906,14 +906,14 @@ class TestGoogleCalendarSync:
         assert build.status_code == 200
 
         # First sync creates the event.
-        with patch("qzwhatnext.api.app.GoogleCredentials.refresh", return_value=None), patch(
+        with patch("qzwhatnext.services.schedule_calendar.GoogleCredentials.refresh", return_value=None), patch(
             "qzwhatnext.integrations.google_calendar.build",
             return_value=MagicMock(),
         ), patch(
-            "qzwhatnext.api.app.GoogleCalendarClient.list_events_in_range",
+            "qzwhatnext.services.schedule_calendar.GoogleCalendarClient.list_events_in_range",
             return_value=[],
         ), patch(
-            "qzwhatnext.api.app.GoogleCalendarClient.create_event_from_block",
+            "qzwhatnext.services.schedule_calendar.GoogleCalendarClient.create_event_from_block",
             return_value={"id": "evt_deleted_1", "etag": "etag_d1", "updated": "2026-01-26T00:00:00Z"},
         ) as create_mock:
             sync1 = test_client.post("/sync-calendar")
@@ -921,21 +921,87 @@ class TestGoogleCalendarSync:
             assert create_mock.call_count >= 1
 
         # Second sync: event is "deleted" in Calendar (status cancelled), so we should recreate.
-        with patch("qzwhatnext.api.app.GoogleCredentials.refresh", return_value=None), patch(
+        with patch("qzwhatnext.services.schedule_calendar.GoogleCredentials.refresh", return_value=None), patch(
             "qzwhatnext.integrations.google_calendar.build",
             return_value=MagicMock(),
         ), patch(
-            "qzwhatnext.api.app.GoogleCalendarClient.list_events_in_range",
+            "qzwhatnext.services.schedule_calendar.GoogleCalendarClient.list_events_in_range",
             return_value=[],
         ), patch(
-            "qzwhatnext.api.app.GoogleCalendarClient.get_event",
+            "qzwhatnext.services.schedule_calendar.GoogleCalendarClient.get_event",
             return_value={"id": "evt_deleted_1", "status": "cancelled"},
         ), patch(
-            "qzwhatnext.api.app.GoogleCalendarClient.create_event_from_block",
+            "qzwhatnext.services.schedule_calendar.GoogleCalendarClient.create_event_from_block",
             return_value={"id": "evt_deleted_2", "etag": "etag_d2", "updated": "2026-01-26T00:10:00Z"},
         ) as create_mock2:
             sync2 = test_client.post("/sync-calendar")
             assert sync2.status_code == 200
             assert create_mock2.call_count >= 1
+
+    def test_sync_calendar_with_no_blocks_deletes_orphan_managed_events(self, test_client):
+        """Empty in-app schedule still scans Calendar and removes stray qzWhatNext-managed events."""
+        from qzwhatnext.integrations.google_calendar import PRIVATE_KEY_BLOCK_ID, PRIVATE_KEY_MANAGED
+
+        _connect_google_calendar(test_client)
+        orphan = {
+            "id": "evt_orphan_1",
+            "status": "confirmed",
+            "start": {"dateTime": "2026-02-01T10:00:00Z"},
+            "end": {"dateTime": "2026-02-01T11:00:00Z"},
+            "extendedProperties": {
+                "private": {PRIVATE_KEY_MANAGED: "1", PRIVATE_KEY_BLOCK_ID: "ghost-block-id"},
+            },
+        }
+        deleted: List[str] = []
+
+        def _delete(eid):
+            deleted.append(eid)
+
+        with patch("qzwhatnext.services.schedule_calendar.GoogleCredentials.refresh", return_value=None), patch(
+            "qzwhatnext.integrations.google_calendar.build",
+            return_value=MagicMock(),
+        ), patch(
+            "qzwhatnext.services.schedule_calendar.GoogleCalendarClient.list_events_in_range",
+            return_value=[orphan],
+        ), patch(
+            "qzwhatnext.services.schedule_calendar.GoogleCalendarClient.delete_event",
+            side_effect=_delete,
+        ):
+            sync = test_client.post("/sync-calendar")
+            assert sync.status_code == 200
+            data = sync.json()
+            assert data.get("orphans_deleted", 0) >= 1
+            assert "evt_orphan_1" in deleted
+
+
+class TestInternalDailyJob:
+    def test_daily_job_returns_404_when_secret_not_configured(self, test_client, monkeypatch):
+        monkeypatch.delenv("QZ_INTERNAL_JOB_SECRET", raising=False)
+        r = test_client.post(
+            "/internal/jobs/daily-schedule",
+            headers={"X-qzwhatnext-job-secret": "anything"},
+        )
+        assert r.status_code == 404
+
+    def test_daily_job_returns_401_on_wrong_secret(self, test_client, monkeypatch):
+        monkeypatch.setenv("QZ_INTERNAL_JOB_SECRET", "expected-secret")
+        r = test_client.post(
+            "/internal/jobs/daily-schedule",
+            headers={"X-qzwhatnext-job-secret": "wrong"},
+        )
+        assert r.status_code == 401
+
+    def test_daily_job_succeeds_with_valid_secret(self, test_client, monkeypatch):
+        monkeypatch.setenv("QZ_INTERNAL_JOB_SECRET", "expected-secret")
+        r = test_client.post(
+            "/internal/jobs/daily-schedule",
+            headers={"X-qzwhatnext-job-secret": "expected-secret"},
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert "users_processed" in body
+        assert "rebuilds" in body
+        assert "syncs" in body
+        assert "errors" in body
 
 
