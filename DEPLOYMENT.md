@@ -131,6 +131,8 @@ qzWhatNext exposes **`POST /internal/jobs/daily-schedule`**, intended to run **o
 
 See comments in the script for optional `JOB_NAME`, `SCHEDULE_CRON`, and `TIME_ZONE`. **Do not commit** the secret; prefer reading it from Secret Manager when invoking the script.
 
+**GitHub Actions deploy:** If you use **`.github/workflows/deploy.yml`**, each deploy runs `gcloud run deploy` with **`--set-secrets`**, which **replaces** the service’s secret list. **`QZ_INTERNAL_JOB_SECRET`** must appear there (mapped to Secret Manager secret **`qz-internal-job-secret`**) or the internal job endpoint will return **404** after every deploy until you add it again in the workflow.
+
 **Hardening (optional):** If you later restrict Cloud Run to authenticated invokers, configure Scheduler **OIDC** with a service account that has **`roles/run.invoker`** and drop the shared header (requires a small product change to accept OIDC-only auth).
 
 ## Multi-User Authentication Setup
