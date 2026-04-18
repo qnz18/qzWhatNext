@@ -861,6 +861,23 @@ Users should not rely on manual “Build schedule” / “Sync” clicks for rou
 
 ---
 
+## D-047 — Cloud Run: `OPENAI_API_KEY` from Secret Manager on CI deploy
+
+**Decision:**  
+GitHub Actions deploy (`.github/workflows/deploy.yml`) maps environment variable **`OPENAI_API_KEY`** to Google Secret Manager secret **`openai-api-key`** at version **`latest`**, using the same `--set-secrets` mechanism as other app secrets. The migrate Cloud Run Job does **not** receive this mapping (migrations do not call OpenAI).
+
+**Rationale:**  
+Production logs showed missing `OPENAI_API_KEY` on Cloud Run because the deploy workflow never attached the secret. Operators already document `openai-api-key` in Secret Manager; wiring it in CI keeps `/tasks/add_smart` inference working after each deploy without committing keys to the repo.
+
+**Implications:**  
+- The **`openai-api-key`** secret must **exist** in GCP before a deploy that uses this mapping (`gcloud run deploy` fails if a referenced secret is missing).  
+- The Cloud Run **runtime** service account needs **`roles/secretmanager.secretAccessor`** on **`openai-api-key`**.  
+- If the secret holds a placeholder or invalid value, the app degrades gracefully but logs inference issues; no free-form user data is logged.
+
+**Status:** Locked (MVP)
+
+---
+
 ## Canonical Rule
 
 If a future behavior conflicts with a decision in this log:

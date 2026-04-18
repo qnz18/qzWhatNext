@@ -66,6 +66,7 @@ jobs:
             --wait \
             --quiet
 
+      # OPENAI_API_KEY is injected from Secret Manager secret `openai-api-key` (must exist in GCP; see DEPLOYMENT.md).
       - name: Deploy to Cloud Run
         run: |
           gcloud run deploy $SERVICE_NAME \
@@ -75,7 +76,7 @@ jobs:
             --allow-unauthenticated \
             --add-cloudsql-instances "${{ secrets.CLOUDSQL_INSTANCE_CONNECTION_NAME }}" \
             --set-env-vars "GOOGLE_OAUTH_CLIENT_ID=${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}" \
-            --set-secrets "JWT_SECRET_KEY=jwt-secret:latest,DATABASE_URL=${{ secrets.DATABASE_URL_SECRET_NAME }}:latest,GOOGLE_OAUTH_CLIENT_SECRET=google-oauth-client-secret:latest,TOKEN_ENCRYPTION_KEY=token-encryption-key:latest,QZ_INTERNAL_JOB_SECRET=qz-internal-job-secret:latest" \
+            --set-secrets "JWT_SECRET_KEY=jwt-secret:latest,DATABASE_URL=${{ secrets.DATABASE_URL_SECRET_NAME }}:latest,GOOGLE_OAUTH_CLIENT_SECRET=google-oauth-client-secret:latest,TOKEN_ENCRYPTION_KEY=token-encryption-key:latest,QZ_INTERNAL_JOB_SECRET=qz-internal-job-secret:latest,OPENAI_API_KEY=openai-api-key:latest" \
             --memory 512Mi \
             --timeout 300 \
             --quiet

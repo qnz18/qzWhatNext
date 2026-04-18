@@ -131,7 +131,7 @@ qzWhatNext exposes **`POST /internal/jobs/daily-schedule`**, intended to run **o
 
 See comments in the script for optional `JOB_NAME`, `SCHEDULE_CRON`, and `TIME_ZONE`. **Do not commit** the secret; prefer reading it from Secret Manager when invoking the script.
 
-**GitHub Actions deploy:** If you use **`.github/workflows/deploy.yml`**, each deploy runs `gcloud run deploy` with **`--set-secrets`**, which **replaces** the service’s secret list. **`QZ_INTERNAL_JOB_SECRET`** must appear there (mapped to Secret Manager secret **`qz-internal-job-secret`**) or the internal job endpoint will return **404** after every deploy until you add it again in the workflow.
+**GitHub Actions deploy:** If you use **`.github/workflows/deploy.yml`**, each deploy runs `gcloud run deploy` with **`--set-secrets`**, which **replaces** the service’s secret list. **`QZ_INTERNAL_JOB_SECRET`** must appear there (mapped to Secret Manager secret **`qz-internal-job-secret`**) or the internal job endpoint will return **404** after every deploy until you add it again in the workflow. **`OPENAI_API_KEY`** is mapped from Secret Manager secret **`openai-api-key:latest`**; that secret **must exist** in the project before deploy succeeds (create an empty placeholder version if you do not use OpenAI yet, then add the real key). Grant the Cloud Run **runtime** service account **Secret Manager Secret Accessor** on **`openai-api-key`** (see Secret Management section below).
 
 **Hardening (optional):** If you later restrict Cloud Run to authenticated invokers, configure Scheduler **OIDC** with a service account that has **`roles/run.invoker`** and drop the shared header (requires a small product change to accept OIDC-only auth).
 
@@ -158,11 +158,15 @@ qzWhatNext uses Google OAuth for user authentication. All API endpoints require 
 # Store JWT secret key
 echo -n "your-secure-random-jwt-secret-key" | gcloud secrets create jwt-secret --data-file=-
 
-# Store OpenAI API key (optional)
+# Store OpenAI API key (required for deploy if using GitHub Actions: secret name must match openai-api-key)
 echo -n "your-openai-api-key" | gcloud secrets create openai-api-key --data-file=-
 
-# Grant Cloud Run service account access to secrets
+# Grant Cloud Run runtime service account access to secrets (repeat per secret as needed)
 gcloud secrets add-iam-policy-binding jwt-secret \
+  --member="serviceAccount:YOUR-SERVICE-ACCOUNT@PROJECT-ID.iam.gserviceaccount.com" \
+  --role="roles/secretmanager.secretAccessor"
+
+gcloud secrets add-iam-policy-binding openai-api-key \
   --member="serviceAccount:YOUR-SERVICE-ACCOUNT@PROJECT-ID.iam.gserviceaccount.com" \
   --role="roles/secretmanager.secretAccessor"
 ```

@@ -68,9 +68,16 @@ rm gcp-sa-key.json
 - **Name:** `GOOGLE_OAUTH_CLIENT_ID`
 - **Value:** Your Google OAuth Client ID (from Google Cloud Console > APIs & Services > Credentials)
 
-### Optional Secrets
+### OpenAI inference (Secret Manager, not a GitHub secret)
 
-- `OPENAI_API_KEY` - For AI inference (if using)
+The workflow maps **`OPENAI_API_KEY`** from Google Secret Manager secret **`openai-api-key:latest`** on Cloud Run (see `deploy.yml` `--set-secrets`). You do **not** add the raw API key to GitHub Secrets.
+
+1. Create the secret in GCP (key from [OpenAI API keys](https://platform.openai.com/api-keys)):
+   `printf '%s' 'sk-...' | gcloud secrets create openai-api-key --data-file=-`  
+   (or `gcloud secrets versions add openai-api-key --data-file=-` if it already exists).
+2. Grant the **Cloud Run runtime** service account **Secret Manager Secret Accessor** on that secret (same pattern as `jwt-secret` below). If deploy fails with permission errors on the new secret, verify this binding.
+
+OpenAI inference is optional: if the secret is missing or empty, the app degrades gracefully (see logs for `OPENAI_API_KEY not found`).
 
 ## How It Works
 
@@ -99,13 +106,21 @@ If you see permission errors:
 
 ### Secret Manager Access
 
-Ensure the Cloud Run service account (not the GitHub Actions service account) has access to Secret Manager:
+Ensure the Cloud Run **runtime** service account (not the GitHub Actions deploy account) can read each secret referenced in `--set-secrets`, including **`openai-api-key`**.
+
 ```bash
 PROJECT_NUMBER=$(gcloud projects describe $PROJECT_ID --format="value(projectNumber)")
-gcloud secrets add-iam-policy-binding jwt-secret \
-  --member="serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \
-  --role="roles/secretmanager.secretAccessor"
+RUNTIME_SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
+
+for SECRET in jwt-secret openai-api-key; do
+  gcloud secrets add-iam-policy-binding "$SECRET" \
+    --member="serviceAccount:${RUNTIME_SA}" \
+    --role="roles/secretmanager.secretAccessor" \
+    --project="$PROJECT_ID" || true
+done
 ```
+
+Use your revision’s **Service account** from Cloud Run if you use a custom runtime SA (replace `RUNTIME_SA`).
 
 ### OAuth Redirect URIs
 
