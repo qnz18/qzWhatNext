@@ -177,6 +177,8 @@ def materialize_recurring_tasks(
                 chosen_days = _choose_n_days_in_week(days, int(p.count_per_period))
                 for day in chosen_days:
                     occ_start = datetime.combine(day, dtime(0, 0))
+                    if task_repo.get_task_for_recurrence_occurrence(user_id, s.id, occ_start):
+                        continue
                     task = create_task_base(
                         user_id=user_id,
                         source_type="recurrence",
@@ -209,6 +211,8 @@ def materialize_recurring_tasks(
             if not _occurs_on_day(p, day):
                 continue
             occ_start = datetime.combine(day, dtime(0, 0))
+            if task_repo.get_task_for_recurrence_occurrence(user_id, s.id, occ_start):
+                continue
             task = create_task_base(
                 user_id=user_id,
                 source_type="recurrence",

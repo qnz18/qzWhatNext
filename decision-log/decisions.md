@@ -834,7 +834,7 @@ Users expect habits to be “do it once, then the next one” rather than a pile
 **Implications:**  
 - Task status gains a value: `missed` (recurrence occurrence passed without completion).
 - Scheduling and “open task” queries exclude `missed` (only `open` tasks are scheduled).
-- During materialization: (1) open recurrence tasks whose flexibility window has ended are updated to `missed`; (2) for each series, at most one open occurrence is kept—only the next occurrence is materialized when the series has none open.
+- During materialization: (1) open recurrence tasks whose flexibility window has ended are updated to `missed`; (2) for each series, at most one open occurrence is kept—only the next occurrence is materialized when the series has none open; (3) materialization never inserts a second row for the same `(series, recurrence_occurrence_start)`—if that anchor already exists (including `missed`), the next matching calendar day is used.
 - Default applies to all recurring task series unless a future decision introduces an explicit “accumulating” option.
 
 **Status:** Draft (MVP)
@@ -873,6 +873,22 @@ Production logs showed missing `OPENAI_API_KEY` on Cloud Run because the deploy 
 - The **`openai-api-key`** secret must **exist** in GCP before a deploy that uses this mapping (`gcloud run deploy` fails if a referenced secret is missing).  
 - The Cloud Run **runtime** service account needs **`roles/secretmanager.secretAccessor`** on **`openai-api-key`**.  
 - If the secret holds a placeholder or invalid value, the app degrades gracefully but logs inference issues; no free-form user data is logged.
+
+**Status:** Locked (MVP)
+
+---
+
+## D-048 — `add_smart` temporal inference (`deadline`, `start_after`, `due_by`)
+
+**Decision:**  
+`POST /tasks/add_smart` may infer optional **`deadline`**, **`start_after`**, and **`due_by`** from **`notes`** via structured OpenAI output with per-field confidence (`TEMPORAL_CONFIDENCE_THRESHOLD`, default 0.6). Grounding uses anchor time (UTC `now` at inference) and an IANA timezone: optional request field **`time_zone`** overrides; else primary Google Calendar timezone when connected; else **`UTC`**. If both **`start_after`** and **`due_by`** are set and **`start_after` > `due_by`**, apply **only** **`start_after := null`** (keep **`due_by`** and **`deadline`**). AI-excluded tasks skip temporal inference (same gate as category/duration).
+
+**Rationale:**  
+Users capture tasks in natural language; soft dates and rare hard deadlines improve ranking and scheduling without manual entry when confidence is high. The conflict rule prevents contradictory “cannot start until after the due date” pairs while preserving the softer due-by intent.
+
+**Implications:**  
+- Canonical docs: `engine/scoring-and-scheduling.md` §12, `security/ai-guardrails.md` §2.  
+- Deterministic post-processing after the model; no tier assignment by AI.
 
 **Status:** Locked (MVP)
 

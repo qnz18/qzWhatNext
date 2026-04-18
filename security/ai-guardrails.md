@@ -31,6 +31,7 @@ This check must occur **before any OpenAI / LLM call** (trust-critical).
 AI may propose structured attributes **with confidence scores**:
 - category
 - estimated duration + duration confidence
+- optional temporal fields on `POST /tasks/add_smart` only: `deadline`, `start_after`, `due_by` (per-field confidence; see `engine/scoring-and-scheduling.md` §12 for conflict handling when `start_after` > `due_by`)
 - energy intensity (not used for scheduling in MVP)
 - risk_score / impact_score
 - dependencies

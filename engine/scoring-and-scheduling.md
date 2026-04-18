@@ -112,7 +112,7 @@ A RecurringTaskSeries is a persisted template that generates Task instances with
 - updated_at: datetime
 - deleted_at: datetime | null
 
-Series materialization is deterministic and idempotent for a given horizon window: tasks are de-duped using `(user_id, recurrence_series_id, recurrence_occurrence_start)`. The default is **habit (non-accumulating)**: at most one open occurrence per series; past-window open occurrences are marked `missed` and only the next occurrence is materialized (see decision D-045).
+Series materialization is deterministic and idempotent for a given horizon window: tasks are de-duped using `(user_id, recurrence_series_id, recurrence_occurrence_start)`. The default is **habit (non-accumulating)**: at most one open occurrence per series; past-window open occurrences are marked `missed` and only the next occurrence is materialized (see decision D-045). When rolling forward, calendar days that already have a row for that occurrence—including **`missed`**—are skipped so the next matching day is materialized (no duplicate insert for the same anchor).
 
 ---
 
@@ -385,6 +385,13 @@ MVP uses base task durations as-is. No padding or Transition Time modeling in MV
 - Estimation uses confidence threshold (0.6) - only high-confidence estimates are used
 - Falls back to default 30 minutes if estimation fails or confidence is too low
 - Respects AI exclusion rules (no estimation for excluded tasks)
+
+**Temporal fields (Optional, `POST /tasks/add_smart`):**
+- From the same `notes` payload, the system may infer optional **`deadline`** (datetime), **`start_after`** (date), and **`due_by`** (date) using structured OpenAI output with per-field confidence (threshold 0.6 by default).
+- Grounding uses an anchor time (UTC `now` at inference) and an IANA timezone: the user’s primary Google Calendar timezone when connected, else `UTC`; optional request field `time_zone` overrides when provided.
+- If both `start_after` and `due_by` are inferred and **`start_after` is strictly after `due_by`**, only **`start_after`** is discarded ( **`due_by`** and **`deadline`** unchanged by this rule).
+- If confidence is low or parsing fails for a field, that field remains unset (defaults / null).
+- AI-excluded tasks skip all temporal inference (same as other AI calls).
 
 ### 12.2 Future: Task Padding and Transition Time
 

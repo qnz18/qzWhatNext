@@ -1,13 +1,13 @@
 """OpenAI API integration for qzWhatNext.
 
-This module provides OpenAI API integration for AI-assisted task attribute inference,
-specifically for category inference and title generation from task notes.
+This module provides OpenAI API integration for AI-assisted task attribute inference:
+category, title, duration, and optional temporal fields (deadline, start_after, due_by) from notes.
 """
 
 import os
 import json
 import logging
-from typing import Tuple, Optional
+from typing import Any, Dict, Tuple, Optional
 from openai import OpenAI, APIError
 from dotenv import load_dotenv
 
@@ -80,6 +80,30 @@ Example responses:
 - Complex task like "Plan family vacation": {{"duration_min": 180, "confidence": 0.7}}
 
 Respond only with the JSON object, no other text."""
+
+# Temporal fields (deadline, start_after, due_by) for add_smart — structured JSON only
+TEMPORAL_PROMPT_TEMPLATE = """You extract scheduling hints from a task note. Use the anchor time and timezone to interpret relative phrases (e.g. "tomorrow", "next Friday").
+
+Task note: "{notes}"
+
+Anchor time (ISO 8601 UTC): {anchor_iso}
+User timezone (IANA): {time_zone}
+
+Rules:
+- "start_after": YYYY-MM-DD — earliest calendar day the user may *start* this work (e.g. "not until Monday", "after April 10"). Omit or null if not stated or unclear.
+- "due_by": YYYY-MM-DD — soft target day to finish when there is no specific clock cutoff. Omit or null if not stated or unclear.
+- "deadline": ISO 8601 string with offset or Z — use ONLY when the note implies a real clock-time cutoff (e.g. "by 5pm Tuesday", "flight at 14:30"). If the note only names a day without a time, use due_by instead — do NOT invent a deadline time.
+- For each of the three fields you output, include a confidence 0.0–1.0. Use 0.0 if the field is null/absent.
+
+Respond with ONLY valid JSON in this exact shape (use null for unknown fields):
+{{
+  "deadline": null or string,
+  "start_after": null or "YYYY-MM-DD",
+  "due_by": null or "YYYY-MM-DD",
+  "deadline_confidence": number,
+  "start_after_confidence": number,
+  "due_by_confidence": number
+}}"""
 
 
 class OpenAIClient:
@@ -376,4 +400,86 @@ class OpenAIClient:
             logger.error(f"Error estimating duration with OpenAI API: {type(e).__name__}")
             # Don't log full error message as it might contain sensitive info
             return (0, 0.0)
+
+    def infer_temporal_fields(
+        self,
+        notes: str,
+        *,
+        anchor_iso: str,
+        time_zone: str,
+    ) -> Dict[str, Any]:
+        """Infer optional deadline, start_after, due_by from notes (structured JSON).
+
+        Returns a dict with keys deadline (str|None), start_after (str|None), due_by (str|None),
+        and *_confidence floats. On failure returns all-null fields and zero confidences.
+        """
+        empty: Dict[str, Any] = {
+            "deadline": None,
+            "start_after": None,
+            "due_by": None,
+            "deadline_confidence": 0.0,
+            "start_after_confidence": 0.0,
+            "due_by_confidence": 0.0,
+        }
+        if not self.client:
+            logger.debug("OpenAI client not initialized. Skipping temporal inference.")
+            return dict(empty)
+        if not notes or not notes.strip():
+            logger.debug("Empty notes. Skipping temporal inference.")
+            return dict(empty)
+
+        try:
+            prompt = TEMPORAL_PROMPT_TEMPLATE.format(
+                notes=notes,
+                anchor_iso=anchor_iso,
+                time_zone=time_zone,
+            )
+            response = self.client.chat.completions.create(
+                model=OPENAI_MODEL,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You extract dates from task notes. Respond only with valid JSON.",
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.2,
+                max_tokens=400,
+            )
+            response_content = response.choices[0].message.content.strip()
+            if response_content.startswith("```json"):
+                response_content = response_content[7:]
+            if response_content.startswith("```"):
+                response_content = response_content[3:]
+            if response_content.endswith("```"):
+                response_content = response_content[:-3]
+            response_content = response_content.strip()
+
+            result = json.loads(response_content)
+            out = dict(empty)
+            for key in ("deadline", "start_after", "due_by"):
+                v = result.get(key)
+                out[key] = v if v else None
+            for key in ("deadline_confidence", "start_after_confidence", "due_by_confidence"):
+                try:
+                    c = float(result.get(key, 0.0))
+                    if c < 0.0 or c > 1.0:
+                        c = 0.0
+                    out[key] = c
+                except (TypeError, ValueError):
+                    out[key] = 0.0
+            return out
+        except APIError as e:
+            error_code = getattr(e, "code", None)
+            status_code = getattr(e, "status_code", None)
+            if error_code == "insufficient_quota":
+                logger.warning("OpenAI quota insufficient for temporal inference.")
+            elif status_code == 429:
+                logger.warning("OpenAI rate limit for temporal inference.")
+            else:
+                logger.error(f"OpenAI API error (temporal): {status_code or 'unknown'}")
+            return dict(empty)
+        except Exception as e:
+            logger.error(f"Error in temporal inference: {type(e).__name__}")
+            return dict(empty)
 

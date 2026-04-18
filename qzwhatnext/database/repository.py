@@ -78,6 +78,25 @@ class TaskRepository:
         ).all()
         return [task_db.to_pydantic() for task_db in tasks_db]
 
+    def get_task_for_recurrence_occurrence(
+        self,
+        user_id: str,
+        recurrence_series_id: str,
+        recurrence_occurrence_start: datetime,
+    ) -> Optional[Task]:
+        """Return a non-deleted task for this occurrence anchor if any (any status).
+
+        Used to avoid inserting a second row for the same calendar occurrence after the
+        open instance was rolled to ``missed`` (unique on user/series/occurrence_start).
+        """
+        task_db = self.db.query(TaskDB).filter(
+            TaskDB.user_id == user_id,
+            TaskDB.recurrence_series_id == recurrence_series_id,
+            TaskDB.recurrence_occurrence_start == recurrence_occurrence_start,
+            TaskDB.deleted_at.is_(None),
+        ).first()
+        return task_db.to_pydantic() if task_db else None
+
     def get_open_recurrence_tasks_with_window_before(self, user_id: str, before: datetime) -> List[Task]:
         """Open recurrence tasks whose flexibility_window end is before the given time (past window)."""
         tasks_db = self.db.query(TaskDB).filter(

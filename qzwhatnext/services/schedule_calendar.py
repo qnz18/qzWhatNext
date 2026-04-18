@@ -121,6 +121,30 @@ def config_schedule_horizon_days() -> int:
     return h
 
 
+def get_calendar_timezone_for_user_best_effort(db: Session, user_id: str) -> str:
+    """Return primary Google Calendar timezone for user, or \"UTC\" if unavailable.
+
+    Used for AI temporal grounding (e.g. add_smart) without failing the request when
+    Calendar is disconnected or tokens are invalid.
+    """
+    try:
+        calendar_client, _ = _calendar_client_for_user(db, user_id)
+        raw = calendar_client.get_calendar_timezone()
+        tz_candidate = str(raw) if raw else "UTC"
+        try:
+            ZoneInfo(tz_candidate)
+            return tz_candidate
+        except Exception:
+            return "UTC"
+    except Exception as e:
+        logger.debug(
+            "Calendar timezone unavailable for user %s (%s); using UTC for inference",
+            user_id,
+            type(e).__name__,
+        )
+        return "UTC"
+
+
 def _calendar_client_for_user(db: Session, user_id: str) -> Tuple[GoogleCalendarClient, GoogleOAuthTokenRepository]:
     token_repo = GoogleOAuthTokenRepository(db)
     token_row = token_repo.get_google_calendar(user_id)

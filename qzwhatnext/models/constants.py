@@ -19,6 +19,11 @@ SCHEDULING_GRANULARITY_MINUTES = 30
 # AI inference confidence thresholds
 CATEGORY_CONFIDENCE_THRESHOLD = 0.6
 DURATION_CONFIDENCE_THRESHOLD = 0.6
+TEMPORAL_CONFIDENCE_THRESHOLD = 0.6
+
+# Temporal inference: max calendar distance from anchor local date (sanity vs model hallucination)
+TEMPORAL_MAX_FUTURE_DAYS = 550  # ~18 months
+TEMPORAL_PAST_GRACE_DAYS = 1  # allow "yesterday" relative phrasing
 
 # Duration constraints
 MIN_DURATION_MIN = 5  # 5 minutes minimum

@@ -117,3 +117,52 @@ class TestMaterializeHabit:
         assert n2 == 0
         open_tasks2 = task_repo.get_open_tasks_for_recurrence_series(test_user_id, series.id)
         assert len(open_tasks2) == 1
+
+    def test_missed_occurrence_skipped_so_next_day_materialized(
+        self, db_session, series_repo, task_repo, test_user_id
+    ):
+        """If an occurrence row exists as missed, materialize the next day instead of duplicate-inserting."""
+        series = series_repo.create(
+            user_id=test_user_id,
+            title_template="Daily habit",
+            notes_template=None,
+            estimated_duration_min_default=5,
+            category_default=TaskCategory.HEALTH.value,
+            recurrence_preset=_recurrence_preset_daily_morning(),
+            ai_excluded=False,
+        )
+        anchor = datetime(2030, 6, 15).date()
+        occ = datetime.combine(anchor, dtime(0, 0))
+        missed = create_task_base(
+            user_id=test_user_id,
+            source_type="recurrence",
+            source_id=series.id,
+            title="Daily habit",
+            notes=None,
+            estimated_duration_min=5,
+            category=TaskCategory.HEALTH,
+            ai_excluded=False,
+            flexibility_window=(
+                datetime.combine(anchor, dtime(6, 30)),
+                datetime.combine(anchor, dtime(11, 0)),
+            ),
+        ).model_copy(
+            update={
+                "status": TaskStatus.MISSED,
+                "recurrence_series_id": series.id,
+                "recurrence_occurrence_start": occ,
+            }
+        )
+        task_repo.create(missed)
+        window_start = datetime.combine(anchor, dtime(20, 0))
+        window_end = window_start + timedelta(days=7)
+        n = materialize_recurring_tasks(
+            db_session,
+            user_id=test_user_id,
+            window_start=window_start,
+            window_end=window_end,
+        )
+        assert n == 1
+        open_tasks = task_repo.get_open_tasks_for_recurrence_series(test_user_id, series.id)
+        assert len(open_tasks) == 1
+        assert open_tasks[0].recurrence_occurrence_start.date() == anchor + timedelta(days=1)

@@ -6,6 +6,7 @@ import uuid
 from datetime import datetime, timedelta, timezone, date, time
 from typing import List, Optional, Dict, Tuple
 from urllib.parse import urlencode, urlparse, urlunparse
+from zoneinfo import ZoneInfo
 
 import jwt
 import requests
@@ -34,7 +35,12 @@ from qzwhatnext.integrations.google_calendar import (
     PRIVATE_KEY_TIME_BLOCK_ID,
 )
 from qzwhatnext.integrations.google_sheets import GoogleSheetsClient
-from qzwhatnext.engine.inference import infer_category, generate_title, estimate_duration
+from qzwhatnext.engine.inference import (
+    infer_category,
+    generate_title,
+    estimate_duration,
+    infer_temporal_fields_for_task,
+)
 from qzwhatnext.database.database import get_db, init_db
 from qzwhatnext.database.repository import TaskRepository
 from qzwhatnext.database.recurring_task_series_repository import RecurringTaskSeriesRepository
@@ -59,6 +65,7 @@ from qzwhatnext.services.schedule_calendar import (
     best_effort_rebuild_and_sync,
     build_schedule_for_user,
     config_schedule_horizon_days,
+    get_calendar_timezone_for_user_best_effort,
     run_daily_schedule_job,
     sync_calendar_for_user,
     verify_internal_job_secret,
@@ -304,6 +311,7 @@ class TaskUpdateRequest(BaseModel):
 class TaskAddSmartRequest(BaseModel):
     """Request model for iOS Shortcut task creation (notes only, auto-generates timestamp title)."""
     notes: str
+    time_zone: Optional[str] = None  # Optional IANA tz for temporal inference (overrides calendar lookup)
 
 
 class TaskResponse(BaseModel):
@@ -564,6 +572,11 @@ async def root():
                 <div class="form-group" style="margin-top: 8px;">
                     <label for="editTaskNotes">Notes</label>
                     <textarea id="editTaskNotes" rows="2" placeholder="(blank clears)"></textarea>
+                </div>
+
+                <div class="form-group" style="margin-top: 12px;">
+                    <label>Task snapshot (read-only, all fields)</label>
+                    <div id="taskSnapshotPanel" class="muted" style="margin-top: 6px; max-height: 420px; overflow: auto; border: 1px solid #e8e8e8; border-radius: 4px; padding: 8px; font-size: 12px;"></div>
                 </div>
             </div>
         </div>
@@ -1415,16 +1428,20 @@ async def root():
                     selectedTaskIds = new Set(Array.from(selectedTaskIds).filter(id => lastRenderedTaskIds.includes(id)));
 
                     let html = `<p><strong>Total tasks: ${data.count}</strong></p>`;
-                    html += '<div class="tasks-container"><table><tr><th class="select-col">Sel</th><th>Title</th><th>Category</th><th>Duration</th><th>Status</th><th>Notes</th></tr>';
+                    html += '<div class="tasks-container"><table><tr><th class="select-col">Sel</th><th>Title</th><th>Category</th><th>Duration</th><th>Deadline</th><th>Due by</th><th>Status</th><th>Notes</th></tr>';
                     data.tasks.forEach(task => {
                         const notes = task.notes ? task.notes.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;') : '';
                         const checked = selectedTaskIds.has(task.id) ? 'checked' : '';
                         const hl = (highlightedTaskId && highlightedTaskId === task.id) ? 'highlighted' : '';
+                        const dl = task.deadline ? formatDateTimeInTz(task.deadline) : '—';
+                        const db = task.due_by ? escapeHtml(String(task.due_by)) : '—';
                         html += `<tr class="task-row ${hl}" data-task-id="${task.id}" onclick="highlightTask('${task.id}')">
                             <td class="select-col"><input type="checkbox" class="task-select" ${checked} onclick="event.stopPropagation()" onchange="toggleTaskSelection('${task.id}', this.checked)"></td>
                             <td>${task.title}</td>
                             <td>${task.category || 'N/A'}</td>
                             <td>${task.estimated_duration_min || 30} min</td>
+                            <td>${dl}</td>
+                            <td>${db}</td>
                             <td>${task.status || 'OPEN'}</td>
                             <td class="notes">${notes || 'N/A'}</td>
                         </tr>`;
@@ -1494,6 +1511,56 @@ async def root():
                 }
             }
 
+            function escapeHtml(s) {
+                if (s === null || s === undefined) return '';
+                return String(s)
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;')
+                    .replace(/'/g, '&#39;');
+            }
+
+            const TASK_SNAPSHOT_KEYS = [
+                'id', 'user_id', 'source_type', 'source_id', 'title', 'notes', 'status',
+                'created_at', 'updated_at', 'deleted_at',
+                'deadline', 'start_after', 'due_by',
+                'estimated_duration_min', 'duration_confidence', 'category', 'energy_intensity',
+                'risk_score', 'impact_score', 'dependencies', 'flexibility_window',
+                'ai_excluded', 'manual_priority_locked', 'user_locked', 'manually_scheduled',
+                'recurrence_series_id', 'recurrence_occurrence_start',
+            ];
+
+            function formatSnapshotValue(key, v) {
+                if (v === null || v === undefined) return '—';
+                if (key === 'deadline' || key === 'deleted_at' || key === 'recurrence_occurrence_start') {
+                    return v ? formatDateTimeInTz(v) : '—';
+                }
+                if (key === 'created_at' || key === 'updated_at') {
+                    return v ? formatDateTimeInTz(v) : '—';
+                }
+                if (Array.isArray(v)) return escapeHtml(JSON.stringify(v));
+                if (typeof v === 'object') return escapeHtml(JSON.stringify(v));
+                return escapeHtml(String(v));
+            }
+
+            function renderTaskSnapshot(t) {
+                const el = document.getElementById('taskSnapshotPanel');
+                if (!el) return;
+                if (!t) {
+                    el.innerHTML = '';
+                    return;
+                }
+                let rows = '';
+                for (const k of TASK_SNAPSHOT_KEYS) {
+                    const v = Object.prototype.hasOwnProperty.call(t, k) ? t[k] : undefined;
+                    rows += '<tr><th style="text-align:left;vertical-align:top;padding:2px 8px 2px 0;white-space:nowrap;">'
+                        + escapeHtml(k) + '</th><td style="vertical-align:top;padding:2px 0;word-break:break-word;">'
+                        + formatSnapshotValue(k, v) + '</td></tr>';
+                }
+                el.innerHTML = '<table style="width:100%;border-collapse:collapse;">' + rows + '</table>';
+            }
+
             function _getVal(id) {
                 const el = document.getElementById(id);
                 return el ? el.value : '';
@@ -1525,15 +1592,6 @@ async def root():
                     const t = data.task;
                     currentEditTaskId = t.id;
 
-                    // Protected (read-only)
-                    _setText('editTaskIdRO', t.id);
-                    _setText('editTaskUserIdRO', t.user_id);
-                    _setText('editTaskSourceRO', `${t.source_type || ''}${t.source_id ? ' · ' + t.source_id : ''}`);
-                    _setText('editTaskCreatedAtRO', t.created_at ? formatDateTimeInTz(t.created_at) : '');
-                    _setText('editTaskUpdatedAtRO', t.updated_at ? formatDateTimeInTz(t.updated_at) : '');
-                    _setText('editTaskRecurrenceRO', `${t.recurrence_series_id || ''}${t.recurrence_occurrence_start ? ' · ' + t.recurrence_occurrence_start : ''}`);
-                    _setText('editTaskAiExcludedRO', t.ai_excluded ? 'true' : 'false');
-
                     // Editable
                     _setVal('editTaskTitle', t.title || '');
                     _setVal('editTaskNotes', t.notes || '');
@@ -1546,6 +1604,8 @@ async def root():
                     _setVal('editTaskDependencies', Array.isArray(t.dependencies) ? t.dependencies.join(', ') : '');
                     _setVal('editTaskStartAfter', t.start_after || '');
                     _setVal('editTaskDueBy', t.due_by || '');
+
+                    renderTaskSnapshot(t);
 
                     status.innerHTML = 'Task loaded.';
                 } catch (e) {
@@ -2727,12 +2787,13 @@ async def add_smart_task(
 ):
     """Create a new task from iOS Shortcut with auto-generated title and category.
     
-    This endpoint is designed for iOS Shortcuts integration. It accepts only
-    a notes field and automatically generates:
+    This endpoint is designed for iOS Shortcuts integration. It accepts
+    `notes` and optional `time_zone` (IANA) for temporal grounding, and automatically generates:
     - Task title from notes using OpenAI API (or truncates notes as fallback)
-    - Category from notes using OpenAI API (if not AI-excluded)
+    - Category and duration from notes (if not AI-excluded)
+    - Optional deadline, start_after, due_by from notes (if not AI-excluded; see D-048)
     
-    If notes start with ".", the task is AI-excluded and uses fallback title generation.
+    If notes start with ".", the task is AI-excluded and uses fallback title generation without AI.
     """
     
     repo = TaskRepository(db)
@@ -2820,7 +2881,33 @@ async def add_smart_task(
             # Log error but don't fail task creation
             logger.error(f"Error estimating duration for task {task.id}: {type(e).__name__}")
             # Continue with default 30 minutes
-    
+
+        # Infer deadline / start_after / due_by from notes (optional; AI-excluded skipped inside)
+        tz_for_inference = (request.time_zone or "").strip()
+        if tz_for_inference:
+            try:
+                ZoneInfo(tz_for_inference)
+            except Exception:
+                tz_for_inference = "UTC"
+        else:
+            tz_for_inference = get_calendar_timezone_for_user_best_effort(db, current_user.id)
+
+        try:
+            anchor = datetime.utcnow()
+            d_deadline, d_start_after, d_due_by = infer_temporal_fields_for_task(
+                task,
+                anchor_utc=anchor,
+                time_zone=tz_for_inference,
+            )
+            if d_deadline is not None:
+                task.deadline = d_deadline
+            if d_start_after is not None:
+                task.start_after = d_start_after
+            if d_due_by is not None:
+                task.due_by = d_due_by
+        except Exception as e:
+            logger.error(f"Error inferring temporal fields for task {task.id}: {type(e).__name__}")
+
     try:
         created_task = repo.create(task)
         best_effort_rebuild_and_sync(db, current_user.id)

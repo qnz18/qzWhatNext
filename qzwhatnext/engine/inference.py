@@ -10,7 +10,11 @@ category, duration, energy intensity, risk score, impact score, and title genera
 """
 
 import logging
+import re
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional, Tuple
+from zoneinfo import ZoneInfo
+
 from qzwhatnext.models.task import Task, TaskCategory
 from qzwhatnext.engine.ai_exclusion import is_ai_excluded
 from qzwhatnext.integrations.openai_client import OpenAIClient
@@ -20,6 +24,9 @@ from qzwhatnext.models.constants import (
     MIN_DURATION_MIN,
     MAX_DURATION_MIN,
     DURATION_ROUNDING,
+    TEMPORAL_CONFIDENCE_THRESHOLD,
+    TEMPORAL_MAX_FUTURE_DAYS,
+    TEMPORAL_PAST_GRACE_DAYS,
 )
 
 logger = logging.getLogger(__name__)
@@ -205,6 +212,123 @@ def estimate_duration(task: Task) -> Tuple[int, float]:
         # Handle any errors gracefully - don't fail task creation
         logger.error(f"Error estimating duration for task {task.id}: {type(e).__name__}")
         return (0, 0.0)
+
+
+def _to_utc_naive(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        return dt
+    return dt.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _parse_iso_deadline(raw: str) -> Optional[datetime]:
+    if not raw or not str(raw).strip():
+        return None
+    s = str(raw).strip()
+    try:
+        if s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+        dt = datetime.fromisoformat(s)
+        return _to_utc_naive(dt)
+    except Exception:
+        return None
+
+
+def _parse_iso_date_only(raw: str) -> Optional[date]:
+    if not raw or not str(raw).strip():
+        return None
+    s = str(raw).strip()
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", s):
+        try:
+            return date.fromisoformat(s)
+        except ValueError:
+            return None
+    return None
+
+
+def _local_date_from_anchor_utc(anchor_utc: datetime, tz_name: str) -> date:
+    try:
+        zi = ZoneInfo(tz_name)
+    except Exception:
+        zi = ZoneInfo("UTC")
+    if anchor_utc.tzinfo is None:
+        anchor_utc = anchor_utc.replace(tzinfo=timezone.utc)
+    return anchor_utc.astimezone(zi).date()
+
+
+def infer_temporal_fields_for_task(
+    task: Task,
+    *,
+    anchor_utc: datetime,
+    time_zone: str,
+) -> Tuple[Optional[datetime], Optional[date], Optional[date]]:
+    """Infer deadline, start_after, due_by from notes. Returns (deadline, start_after, due_by).
+
+    - Checks AI exclusion before any OpenAI call.
+    - Applies TEMPORAL_CONFIDENCE_THRESHOLD per field.
+    - Clamps dates to a sane window relative to anchor local date.
+    - If both start_after and due_by are set and start_after > due_by, drops start_after only.
+    """
+    if is_ai_excluded(task):
+        logger.debug(f"Task {task.id} is AI-excluded. Skipping temporal inference.")
+        return (None, None, None)
+
+    notes = task.notes or ""
+    if not notes.strip():
+        logger.debug(f"Task {task.id} has no notes. Skipping temporal inference.")
+        return (None, None, None)
+
+    try:
+        client = _get_openai_client()
+        anchor_iso = anchor_utc.replace(tzinfo=timezone.utc).isoformat().replace("+00:00", "Z")
+        raw = client.infer_temporal_fields(notes, anchor_iso=anchor_iso, time_zone=time_zone)
+
+        deadline: Optional[datetime] = None
+        start_after: Optional[date] = None
+        due_by: Optional[date] = None
+
+        if raw.get("deadline") and float(raw.get("deadline_confidence") or 0.0) >= TEMPORAL_CONFIDENCE_THRESHOLD:
+            deadline = _parse_iso_deadline(raw["deadline"])
+        if raw.get("start_after") and float(raw.get("start_after_confidence") or 0.0) >= TEMPORAL_CONFIDENCE_THRESHOLD:
+            start_after = _parse_iso_date_only(raw["start_after"])
+        if raw.get("due_by") and float(raw.get("due_by_confidence") or 0.0) >= TEMPORAL_CONFIDENCE_THRESHOLD:
+            due_by = _parse_iso_date_only(raw["due_by"])
+
+        local_day = _local_date_from_anchor_utc(anchor_utc, time_zone)
+        min_day = local_day - timedelta(days=TEMPORAL_PAST_GRACE_DAYS)
+        max_day = local_day + timedelta(days=TEMPORAL_MAX_FUTURE_DAYS)
+
+        def _in_range(d: date) -> bool:
+            return min_day <= d <= max_day
+
+        if start_after is not None and not _in_range(start_after):
+            start_after = None
+        if due_by is not None and not _in_range(due_by):
+            due_by = None
+        if deadline is not None:
+            try:
+                zi = ZoneInfo(time_zone)
+            except Exception:
+                zi = ZoneInfo("UTC")
+            dl_naive = _to_utc_naive(deadline)
+            dl_utc = dl_naive.replace(tzinfo=timezone.utc)
+            local_d = dl_utc.astimezone(zi).date()
+            if not _in_range(local_d):
+                deadline = None
+            else:
+                deadline = dl_naive
+
+        if start_after is not None and due_by is not None and start_after > due_by:
+            logger.debug(
+                "Temporal conflict: start_after %s > due_by %s; dropping start_after",
+                start_after,
+                due_by,
+            )
+            start_after = None
+
+        return (deadline, start_after, due_by)
+    except Exception as e:
+        logger.error(f"Error inferring temporal fields for task {task.id}: {type(e).__name__}")
+        return (None, None, None)
 
 
 def infer_task_attributes(task: Task) -> Optional[Task]:
