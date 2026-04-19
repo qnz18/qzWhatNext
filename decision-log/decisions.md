@@ -1,7 +1,7 @@
 # qzWhatNext – Decision Log
 
 Version: 0.1.1  
-Last Updated: 2026-01-17  
+Last Updated: 2026-04-18  
 Status: Locked (MVP decisions)
 
 This log records all non-obvious product and engine decisions that govern qzWhatNext.
@@ -244,15 +244,21 @@ Balances realism with flexibility.
 
 ---
 
-## D-015 — Task Splitting Allowed
+## D-015 — One Contiguous Block per Scheduled Task
 
 **Decision:**  
-Tasks may be split across multiple time blocks.
+Each system-scheduled task is placed as **one contiguous time block** spanning its estimated duration (not split into multiple `ScheduledBlock` rows).
 
 **Rationale:**  
-Reflects real-world work patterns and prevents artificial blocking.
+Calendar clarity: one block matches one planned work session and typical calendar event semantics.
+
+**Implications:**  
+The scheduler needs a **single contiguous** free window long enough for the task. A task may **overflow** in situations where only fragmented gaps exist, whereas splitting into smaller segments could sometimes have fit around interruptions.
 
 **Status:** Locked
+
+**Change log:**  
+2026-04-18: Supersedes prior MVP wording that allowed splitting a task across multiple blocks.
 
 ---
 

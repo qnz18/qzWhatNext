@@ -63,8 +63,7 @@ AI may **not**:
 
 ## Scheduling basics
 
-- Default scheduling granularity: **30 minutes**
-- Tasks may be **split** across blocks
+- Default scheduling granularity: **30 minutes** (alignment; each task is scheduled as **one contiguous block**)
 - The system may move **only** blocks it scheduled itself
 - The system may **not** move:
   - user-blocked time

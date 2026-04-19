@@ -4,11 +4,10 @@ These tests verify that scheduling is deterministic (same inputs → same output
 and handles overflow correctly.
 """
 
-import pytest
 from datetime import datetime, timedelta
 import uuid
 
-from qzwhatnext.engine.scheduler import schedule_tasks, SchedulingResult, SCHEDULING_GRANULARITY_MINUTES, round_to_granularity
+from qzwhatnext.engine.scheduler import schedule_tasks, SchedulingResult, round_to_granularity
 from qzwhatnext.engine.ranking import stack_rank
 from qzwhatnext.models.task import Task, TaskStatus, TaskCategory, EnergyIntensity
 from qzwhatnext.models.scheduled_block import EntityType, ScheduledBy
@@ -45,16 +44,15 @@ class TestScheduleTasks:
         
         result = schedule_tasks([task1, task2, task3], start_time=start_time, end_time=end_time)
         
-        assert len(result.scheduled_blocks) >= 3  # At least 1 block per task
+        assert len(result.scheduled_blocks) == 3  # One contiguous block per task
         assert len(result.overflow_tasks) == 0
         assert result.scheduled_blocks[0].entity_id == task1.id
         assert result.scheduled_blocks[0].start_time == start_time
         
-        # Find task2 blocks
         task2_blocks = [b for b in result.scheduled_blocks if b.entity_id == task2.id]
-        assert len(task2_blocks) >= 1
-        # Task2 should start after task1 ends
-        assert task2_blocks[0].start_time >= result.scheduled_blocks[0].end_time
+        assert len(task2_blocks) == 1
+        assert (task2_blocks[0].end_time - task2_blocks[0].start_time) == timedelta(minutes=60)
+        assert task2_blocks[0].start_time == result.scheduled_blocks[0].end_time
     
     def test_skips_manually_scheduled_tasks(self, sample_task_base, manually_scheduled_task):
         """Test that manually scheduled tasks are skipped."""
@@ -102,27 +100,40 @@ class TestScheduleTasks:
         
         result = schedule_tasks([task1, task2], start_time=start_time, end_time=end_time)
         
-        # First task should be scheduled
-        assert len([b for b in result.scheduled_blocks if b.entity_id == task1.id]) >= 1
+        task1_blocks = [b for b in result.scheduled_blocks if b.entity_id == task1.id]
+        assert len(task1_blocks) == 1
+        assert (task1_blocks[0].end_time - task1_blocks[0].start_time) == timedelta(minutes=60)
         # Second task should be in overflow
         assert len(result.overflow_tasks) == 1
         assert result.overflow_tasks[0].id == task2.id
     
-    def test_splits_long_task_into_multiple_blocks(self, sample_task_base):
-        """Test that long tasks are split into multiple 30-minute blocks."""
-        task = Task(**{**sample_task_base, "estimated_duration_min": 90})  # 90 minutes = 3 blocks
+    def test_long_task_is_single_contiguous_block(self, sample_task_base):
+        """Long tasks are one ScheduledBlock spanning full estimated duration."""
+        task = Task(**{**sample_task_base, "estimated_duration_min": 90})
         start_time = datetime(2024, 1, 1, 10, 0, 0)
         end_time = start_time + timedelta(days=7)
         
         result = schedule_tasks([task], start_time=start_time, end_time=end_time)
         
-        # Should have multiple blocks for the 90-minute task
         task_blocks = [b for b in result.scheduled_blocks if b.entity_id == task.id]
-        assert len(task_blocks) >= 3  # At least 3 blocks (30 min each)
-        
-        # Blocks should be sequential
-        for i in range(len(task_blocks) - 1):
-            assert task_blocks[i].end_time == task_blocks[i + 1].start_time
+        assert len(task_blocks) == 1
+        assert (task_blocks[0].end_time - task_blocks[0].start_time) == timedelta(minutes=90)
+        assert task_blocks[0].start_time == start_time
+
+    def test_overflow_when_no_contiguous_window_across_reservation(self, sample_task_base):
+        """60 minutes must be contiguous; fragmented gaps around a reservation are not enough."""
+        task = Task(**{**sample_task_base, "estimated_duration_min": 60})
+        start_time = datetime(2024, 1, 1, 10, 0, 0)
+        end_time = datetime(2024, 1, 1, 11, 30, 0)
+        reserved = [
+            (datetime(2024, 1, 1, 10, 30, 0), datetime(2024, 1, 1, 11, 0, 0)),
+        ]
+        result = schedule_tasks(
+            [task], start_time=start_time, end_time=end_time, reserved_intervals=reserved
+        )
+        assert result.scheduled_blocks == []
+        assert len(result.overflow_tasks) == 1
+        assert result.overflow_tasks[0].id == task.id
     
     def test_deterministic_same_inputs_same_output(self, sample_task_base):
         """Test that same inputs produce same outputs (deterministic)."""
@@ -146,20 +157,18 @@ class TestScheduleTasks:
             assert result1.scheduled_blocks[i].start_time == result2.scheduled_blocks[i].start_time == result3.scheduled_blocks[i].start_time
             assert result1.scheduled_blocks[i].end_time == result2.scheduled_blocks[i].end_time == result3.scheduled_blocks[i].end_time
     
-    def test_rounds_to_granularity(self, sample_task_base):
-        """Test that tasks use 30-minute granularity."""
-        task = Task(**{**sample_task_base, "estimated_duration_min": 15})  # Less than 30 min
+    def test_short_task_block_matches_duration(self, sample_task_base):
+        """Sub-30-minute tasks get one block whose length matches estimated duration."""
+        task = Task(**{**sample_task_base, "estimated_duration_min": 15})
         start_time = datetime(2024, 1, 1, 10, 0, 0)
         end_time = start_time + timedelta(days=7)
         
         result = schedule_tasks([task], start_time=start_time, end_time=end_time)
         
-        # Should still use at least one 30-minute block
-        assert len(result.scheduled_blocks) >= 1
+        assert len(result.scheduled_blocks) == 1
         block = result.scheduled_blocks[0]
         duration = (block.end_time - block.start_time).total_seconds() / 60
-        assert duration >= 15  # At least the task duration
-        assert duration <= 30  # But rounded to granularity
+        assert duration == 15
     
     def test_stacks_ranked_tasks_in_priority_order(self, sample_task_base):
         """Test that stack-ranked tasks are scheduled in priority order."""

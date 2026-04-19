@@ -35,8 +35,7 @@ def schedule_tasks(
     For minimal MVP:
     - Assumes all time is free (no calendar conflict checking)
     - Places tasks in order starting from start_time
-    - Uses 30-minute minimum blocks
-    - Splits tasks across multiple blocks if needed
+    - Each task is one contiguous block spanning estimated_duration_min (requires a single free window)
     
     Args:
         tasks: List of tasks in stack-ranked order
@@ -134,46 +133,30 @@ def schedule_tasks(
             result.overflow_tasks.append(task)
             continue
 
-        # Create scheduled blocks for this task (all-or-nothing within window).
-        remaining_duration = duration_minutes
-        candidate_start = task_start
-        new_blocks: List[ScheduledBlock] = []
-        failed = False
+        # One contiguous block for the full duration (all-or-nothing within window).
+        candidate_start = next_available_time(task_start, duration_minutes)
+        block_end = candidate_start + timedelta(minutes=duration_minutes)
 
-        while remaining_duration > 0:
-            block_duration = min(remaining_duration, SCHEDULING_GRANULARITY_MINUTES)
-            candidate_start = next_available_time(candidate_start, block_duration)
-            block_end = candidate_start + timedelta(minutes=block_duration)
-
-            if block_end > end_time:
-                failed = True
-                break
-            if window_end is not None and block_end > window_end:
-                failed = True
-                break
-
-            new_blocks.append(
-                ScheduledBlock(
-                    id=str(uuid.uuid4()),
-                    user_id=task.user_id,
-                    entity_type=EntityType.TASK,
-                    entity_id=task.id,
-                    start_time=candidate_start,
-                    end_time=block_end,
-                    scheduled_by=ScheduledBy.SYSTEM,
-                    locked=False,
-                )
-            )
-
-            candidate_start = block_end
-            remaining_duration -= block_duration
-
-        if failed:
+        if block_end > end_time:
+            result.overflow_tasks.append(task)
+            continue
+        if window_end is not None and block_end > window_end:
             result.overflow_tasks.append(task)
             continue
 
-        result.scheduled_blocks.extend(new_blocks)
-        current_time = candidate_start
+        result.scheduled_blocks.append(
+            ScheduledBlock(
+                id=str(uuid.uuid4()),
+                user_id=task.user_id,
+                entity_type=EntityType.TASK,
+                entity_id=task.id,
+                start_time=candidate_start,
+                end_time=block_end,
+                scheduled_by=ScheduledBy.SYSTEM,
+                locked=False,
+            )
+        )
+        current_time = block_end
     
     return result
 

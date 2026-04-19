@@ -181,8 +181,8 @@ Future releases will include:
 
 ## 9. Scheduling Fundamentals
 
-- Default scheduling unit: 30 minutes
-- Tasks may be split across blocks
+- Default scheduling unit: 30 minutes (alignment / rounding; each task is still one contiguous block)
+- Each scheduled task occupies one contiguous block for its full estimated duration
 - The system may move tasks it scheduled itself
 - The system may not move:
   - User-blocked time

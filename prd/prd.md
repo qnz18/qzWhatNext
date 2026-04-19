@@ -167,8 +167,8 @@ Tasks starting with `.` or explicitly flagged by the user are always excluded fr
 ---
 
 ### 7.4 Scheduling
-- Default scheduling granularity: 30 minutes
-- Tasks may be split across multiple blocks
+- Default scheduling granularity: 30 minutes (for alignment; each task is one contiguous block)
+- Each scheduled task is one contiguous block spanning estimated duration
 - The system may move tasks it scheduled itself
 - The system may not move:
   - User-blocked time

@@ -403,9 +403,9 @@ Task padding percentage and explicit Transition Time modeling (entities, types, 
 
 The scheduler:
 1. iterates tasks in final stack-rank order
-2. finds the earliest feasible placement
-3. splits tasks into 30-minute minimum chunks if needed
-4. marks tasks overflow if no valid placement exists
+2. finds the earliest feasible placement for **one contiguous block** whose length equals the task duration
+3. uses default **30-minute granularity** for alignment helpers (e.g. rounding), not for splitting work across multiple blocks
+4. marks tasks overflow if no valid contiguous placement exists
 
 The scheduling horizon is configurable to **7, 14, or 30 days** (capped at 30).
 
