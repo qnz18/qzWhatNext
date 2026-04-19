@@ -31,6 +31,7 @@ from qzwhatnext.integrations.google_calendar import (
 from qzwhatnext.models.scheduled_block import ScheduledBlock
 from qzwhatnext.models.task import Task
 from qzwhatnext.recurrence.materialize import materialize_recurring_tasks
+from qzwhatnext.services.calendar_event_text import append_task_id_footer, strip_task_id_footer
 
 logger = logging.getLogger(__name__)
 
@@ -558,15 +559,17 @@ def sync_calendar_for_user(db: Session, user_id: str, horizon_days: int) -> Dict
                             )
                     ev_title = event.get("summary")
                     ev_notes = event.get("description")
+                    ev_notes_stripped = strip_task_id_footer(ev_notes) if ev_notes is not None else None
+                    notes_cmp = (task.notes or "").strip()
                     if (ev_title is not None and ev_title != task.title) or (
-                        ev_notes is not None and ev_notes != task.notes
+                        ev_notes is not None and (ev_notes_stripped or "") != notes_cmp
                     ):
                         existing = task_repo.get(user_id, task.id)
                         if existing is not None:
                             updated_task = existing.model_copy(
                                 update={
                                     "title": ev_title if ev_title is not None else existing.title,
-                                    "notes": ev_notes if ev_notes is not None else existing.notes,
+                                    "notes": ev_notes_stripped if ev_notes is not None else existing.notes,
                                     "updated_at": datetime.utcnow(),
                                 }
                             )
@@ -582,7 +585,7 @@ def sync_calendar_for_user(db: Session, user_id: str, horizon_days: int) -> Dict
 
                 desired = {
                     "summary": task.title,
-                    "description": task.notes,
+                    "description": append_task_id_footer(task.notes, task.id),
                     "start": {"dateTime": block.start_time.isoformat(), "timeZone": "UTC"},
                     "end": {"dateTime": block.end_time.isoformat(), "timeZone": "UTC"},
                     "extendedProperties": {

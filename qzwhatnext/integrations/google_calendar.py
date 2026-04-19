@@ -11,6 +11,7 @@ from googleapiclient.errors import HttpError
 from dotenv import load_dotenv
 
 from qzwhatnext.models.scheduled_block import ScheduledBlock, EntityType
+from qzwhatnext.services.calendar_event_text import append_task_id_footer
 from qzwhatnext.models.task import Task
 
 load_dotenv()
@@ -112,9 +113,10 @@ class GoogleCalendarClient:
             raise ValueError(f"Cannot create event for entity type: {block.entity_type}")
         
         # Build event body
+        desc = append_task_id_footer(task.notes if task else None, block.entity_id) if task else f"Task ID: {block.entity_id}"
         event_body = {
             'summary': task.title if task else f"Task {block.entity_id}",
-            'description': task.notes if task else f"Task ID: {block.entity_id}",
+            'description': desc,
             'start': {
                 'dateTime': block.start_time.isoformat(),
                 'timeZone': 'UTC',

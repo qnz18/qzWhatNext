@@ -147,6 +147,25 @@ class TestTaskEndpoints:
         assert task["title"] == "Updated Title"
         assert task["category"] == "work"
 
+    def test_snooze_task_invalid_preset(self, test_client):
+        """POST /tasks/{id}/snooze rejects unknown preset."""
+        create = test_client.post("/tasks", json={"title": "Snooze me", "category": "unknown"})
+        tid = create.json()["task"]["id"]
+        r = test_client.post(f"/tasks/{tid}/snooze", json={"preset": "not_a_preset"})
+        assert r.status_code == 400
+
+    def test_snooze_task_15m_sets_flexibility_window(self, test_client):
+        """POST /tasks/{id}/snooze applies preset and returns task with flexibility_window."""
+        create = test_client.post("/tasks", json={"title": "Snooze me", "category": "unknown"})
+        assert create.status_code == 201
+        tid = create.json()["task"]["id"]
+        with patch("qzwhatnext.services.task_snooze.best_effort_rebuild_and_sync"):
+            r = test_client.post(f"/tasks/{tid}/snooze", json={"preset": "15m"})
+        assert r.status_code == 200
+        t = r.json()["task"]
+        assert t.get("flexibility_window") is not None
+        assert len(t["flexibility_window"]) == 2
+
     def test_update_task_allows_clearing_dates_and_derives_ai_excluded_from_title(self, test_client):
         """PUT /tasks/{task_id} supports clearing start_after/due_by and derives ai_excluded from title prefix."""
         create_response = test_client.post(

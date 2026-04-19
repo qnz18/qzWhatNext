@@ -67,6 +67,7 @@ Visit `http://localhost:8000` in your browser.
   - `GET /tasks` - List all tasks
   - `GET /tasks/{task_id}` - Get a specific task
   - `PUT /tasks/{task_id}` - Update a task
+  - `POST /tasks/{task_id}/snooze` - Snooze with a preset (`15m`, `1h`, `later_today`, `tonight`, `tomorrow`); rebuilds schedule and syncs calendar
   - `DELETE /tasks/{task_id}` - Delete a task
 - **Import tasks** from Google Sheets:
   - `POST /import/sheets` - Import tasks from a Google Sheet

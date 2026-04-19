@@ -70,6 +70,7 @@ from qzwhatnext.services.schedule_calendar import (
     sync_calendar_for_user,
     verify_internal_job_secret,
 )
+from qzwhatnext.services.task_snooze import SnoozePreset, apply_snooze_preset
 
 # Initialize logger
 logger = logging.getLogger(__name__)
@@ -323,6 +324,15 @@ class TaskListResponse(BaseModel):
     """Response model for task list."""
     tasks: List[Task]
     count: int
+
+
+class TaskSnoozeRequest(BaseModel):
+    """Snooze preset: narrows flexibility_window; schedule rebuild finds optimal placement."""
+
+    preset: str = Field(
+        ...,
+        description="One of: 15m, 1h, later_today, tonight, tomorrow",
+    )
 
 
 class BulkTaskIdsRequest(BaseModel):
@@ -3001,6 +3011,33 @@ async def update_task(
     except Exception as e:
         logger.error(f"Failed to update task {task_id}: {type(e).__name__}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to update task: {str(e)}")
+
+
+@app.post("/tasks/{task_id}/snooze", response_model=TaskResponse)
+async def snooze_task(
+    task_id: str,
+    request: TaskSnoozeRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Defer a task using a preset window; engine rebuilds schedule and syncs calendar."""
+    raw = (request.preset or "").strip().lower()
+    try:
+        preset = SnoozePreset(raw)
+    except ValueError:
+        allowed = ", ".join(p.value for p in SnoozePreset)
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid preset. Use one of: {allowed}",
+        )
+    try:
+        task = apply_snooze_preset(db, current_user.id, task_id, preset)
+        return TaskResponse(task=task)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        logger.error(f"Snooze failed for task {task_id}: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to snooze task") from e
 
 
 @app.delete("/tasks/{task_id}", status_code=204)

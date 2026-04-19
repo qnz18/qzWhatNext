@@ -1,7 +1,7 @@
 # qzWhatNext – Decision Log
 
-Version: 0.1.1  
-Last Updated: 2026-04-18  
+Version: 0.1.2  
+Last Updated: 2026-04-13  
 Status: Locked (MVP decisions)
 
 This log records all non-obvious product and engine decisions that govern qzWhatNext.
@@ -895,6 +895,25 @@ Users capture tasks in natural language; soft dates and rare hard deadlines impr
 **Implications:**  
 - Canonical docs: `engine/scoring-and-scheduling.md` §12, `security/ai-guardrails.md` §2.  
 - Deterministic post-processing after the model; no tier assignment by AI.
+
+**Status:** Locked (MVP)
+
+---
+
+## D-049 — Task snooze presets + Home Assistant notifications
+
+**Decision:**  
+- **`POST /tasks/{task_id}/snooze`** accepts **`{ "preset": "<value>" }`** where preset is one of **`15m`**, **`1h`**, **`later_today`**, **`tonight`**, **`tomorrow`**. The server sets a **narrow `flexibility_window`** on the task (UTC-naive datetimes), then runs **`best_effort_rebuild_and_sync`** so the **scheduler** places the task optimally and **Google Calendar sync** updates events.  
+- **Defaults:** **`tonight`** = local **17:00–23:59** on the current calendar day (rolls to next day if that window has passed). **`later_today`** = from **now** through end of local calendar day. **`tomorrow`** = full next local day. **`15m` / `1h`** = earliest start at least that far after **now**, through the schedule horizon.  
+- **Google Calendar `description`** for managed task events appends a machine line **`qzwhatnext_task_id:<uuid>`** (`qzwhatnext/services/calendar_event_text.py`) so Home Assistant can resolve **`task_id`** without relying on extended properties. Imported calendar text strips this line before comparing to **`task.notes`**.  
+- **AppDaemon** (optional): **`qz_base_url`** + **`qz_bearer_token`** enable **`GET /tasks/{id}`** for richer push copy; **end** notifications include **Complete** and **snooze** actions that call **`PUT /tasks/{id}`** (`status: completed`) and **`POST /tasks/{id}/snooze`**.
+
+**Rationale:**  
+Snooze is a **scheduling** concern, not a raw date field edit from the client. Presets map to explicit windows the engine can satisfy; HA does not compute optimal times.
+
+**Implications:**  
+- **`manually_scheduled`** tasks cannot use this snooze endpoint (400).  
+- Canonical API surface documented in [QUICKSTART.md](QUICKSTART.md).
 
 **Status:** Locked (MVP)
 

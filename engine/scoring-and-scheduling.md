@@ -436,7 +436,7 @@ Overflow behavior:
 
 ## 15. Task Rescheduling (MVP)
 
-MVP supports manual task rescheduling by users. Automatic snooze suggestions are deferred to future releases.
+MVP supports manual task rescheduling by users. **Snooze** is implemented via **`POST /tasks/{task_id}/snooze`** with a **preset** (`15m`, `1h`, `later_today`, `tonight`, `tomorrow`): the API sets a **`flexibility_window`** on the task (see decision **D-049**), then the normal **schedule rebuild** places the task within that window. This is not a client-computed datetime bump.
 
 ---
 
